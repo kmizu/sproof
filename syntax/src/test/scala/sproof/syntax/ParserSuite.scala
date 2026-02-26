@@ -983,3 +983,79 @@ class ParserSuite extends FunSuite:
     val STactic.SSeq(tactics) = result.toOption.get: @unchecked
     assertEquals(tactics, List(STactic.SSkip, STactic.STrivial))
   }
+
+  // ===== Scala-flavored syntax =====
+
+  // -- enum (alias for inductive) --
+
+  test("enum Nat parses as SInductive") {
+    val result = Parser.parseDecl("enum Nat { case zero: Nat  case succ(n: Nat): Nat }")
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInductive(name, _, ctors) = result.toOption.get: @unchecked
+    assertEquals(name, "Nat")
+    assertEquals(ctors.length, 2)
+  }
+
+  test("enum with type parameter parses as SInductive") {
+    val result = Parser.parseDecl("enum List[A] { case nil: List(A)  case cons(h: A, t: List(A)): List(A) }")
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInductive(name, params, _) = result.toOption.get: @unchecked
+    assertEquals(name, "List")
+    assertEquals(params.length, 1)
+  }
+
+  // -- postfix match: e match { ... } --
+
+  test("postfix match: n match { case ... }") {
+    val result = Parser.parseExpr("n match { case Nat.zero => m }")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SExpr.SEMatch(SExpr.SEVar("n"), List(SMatchCase(_, _, SExpr.SEVar("m")))) => ()
+      case other => fail(s"Expected SEMatch, got $other")
+  }
+
+  test("postfix match with application: plus(n, m) match { ... }") {
+    val result = Parser.parseExpr("f(x) match { case Nat.zero => x }")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SExpr.SEMatch(SExpr.SEApp(SExpr.SEVar("f"), _), _) => ()
+      case other => fail(s"Expected SEMatch with App scrutinee, got $other")
+  }
+
+  // -- trait (alias for structure) --
+
+  test("trait Foo parses as SStructure") {
+    val result = Parser.parseDecl("trait Eq { eq: Nat -> Nat -> Nat }")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SDecl.SStructure("Eq", _) => ()
+      case other => fail(s"Expected SStructure, got $other")
+  }
+
+  // -- given (alias for instance) --
+
+  test("given instName: StructName { ... } parses as SInstance") {
+    val result = Parser.parseDecl("given natEq: Eq { eq = plus }")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SDecl.SInstance("natEq", "Eq", _) => ()
+      case other => fail(s"Expected SInstance, got $other")
+  }
+
+  // -- (x: T) => body lambda without fun keyword --
+
+  test("(x: Nat) => body parses as SELam") {
+    val result = Parser.parseExpr("(x: Nat) => x")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SExpr.SELam(List(SParam("x", SType.STVar("Nat"))), SExpr.SEVar("x")) => ()
+      case other => fail(s"Expected SELam, got $other")
+  }
+
+  test("(x: Nat, y: Nat) => plus(x, y) parses as SELam") {
+    val result = Parser.parseExpr("(x: Nat, y: Nat) => plus(x, y)")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SExpr.SELam(params, _) => assertEquals(params.length, 2)
+      case other => fail(s"Expected SELam, got $other")
+  }

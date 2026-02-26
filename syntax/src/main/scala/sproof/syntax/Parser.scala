@@ -32,11 +32,11 @@ object Parser:
     ),
     symbolDesc = SymbolDesc.plain.copy(
       hardKeywords = Set(
-        "inductive", "def", "defspec", "theorem", "case", "match", "by",
+        "inductive", "enum", "def", "defspec", "theorem", "case", "match", "by",
         "trivial", "triv", "rfl", "assume", "intro", "intros",
         "apply", "exact", "simplify", "simp",
         "induction", "sorry", "fun", "Pi", "Type",
-        "structure", "instance", "operator",
+        "structure", "trait", "instance", "given", "operator",
         "have", "rewrite", "rw", "calc", "let", "in",
         "try", "first", "repeat", "all_goals", "skip",
         "assumption", "contradiction", "cases",
@@ -173,11 +173,20 @@ object Parser:
   private lazy val expr: Parsley[SExpr] = choice(
     matchExpr,
     lamExpr,
+    scalaLamExpr,
     letExpr,
     ifExpr,
     listLiteral,
     addExpr,
   )
+
+  /** (x: T) => body  or  (x: T, y: T) => body — Scala-style lambda without `fun` */
+  private lazy val scalaLamExpr: Parsley[SExpr] =
+    atomic(paramList.flatMap { params =>
+      op("=>") *> fwd(expr).map { body =>
+        SExpr.SELam(params, body)
+      }
+    })
 
   /** if cond then e1 else e2 */
   private lazy val ifExpr: Parsley[SExpr] =
@@ -209,9 +218,11 @@ object Parser:
       op("+") #> ((l: SExpr, r: SExpr) => SExpr.SInfix(l, "+", r))
     )
 
-  /** Multiplicative level: left-associative * (tighter than +) */
+  /** Multiplicative level: left-associative * (tighter than +).
+   *  Uses appOrVarOrConOrMatch so `e match { ... }` binds tighter than operators.
+   */
   private lazy val mulExpr: Parsley[SExpr] =
-    chain.left1(appOrVarOrCon)(
+    chain.left1(appOrVarOrConOrMatch)(
       op("*") #> ((l: SExpr, r: SExpr) => SExpr.SInfix(l, "*", r))
     )
 
@@ -315,8 +326,19 @@ object Parser:
           }
     }
 
-  /** Simple expression (no match, for scrutinee position) */
+  /** Simple expression (no match, for scrutinee position — avoids infinite loop) */
   private lazy val simpleExpr: Parsley[SExpr] = appOrVarOrCon
+
+  /** Expression with optional postfix match: `e match { cases }` (Scala 3 style).
+   *  Used in the mul/add chain so that `f(x) match { ... }` works at any precedence.
+   */
+  private lazy val appOrVarOrConOrMatch: Parsley[SExpr] =
+    appOrVarOrCon.flatMap { base =>
+      option(keyword("match") *> braces(many(fwd(matchCase)))).map {
+        case Some(cases) => SExpr.SEMatch(base, cases)
+        case None        => base
+      }
+    }
 
   // ---- Parameter declarations ----
 
@@ -342,11 +364,14 @@ object Parser:
   private lazy val decl: Parsley[SDecl] = choice(
     attrDecl,
     checkDecl,
+    enumDecl,
     inductiveDecl,
     theoremDecl,
     defspecDecl,
     defDecl,
+    traitDecl,
     structureDecl,
+    givenDecl,
     instanceDecl,
     operatorDecl,
   )
@@ -388,6 +413,16 @@ object Parser:
       option(paramList).map(_.getOrElse(Nil)).flatMap { params =>
         braces(many(ctorDecl)).map { ctors =>
           SDecl.SInductive(name, params, ctors)
+        }
+      }
+    }
+
+  /** enum Name[A, B] { case ctor1: T ... } — Scala 3-style alias for inductive */
+  private lazy val enumDecl: Parsley[SDecl] =
+    keyword("enum") *> identifier.flatMap { name =>
+      option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
+        braces(many(ctorDecl)).map { ctors =>
+          SDecl.SInductive(name, tparams, ctors)
         }
       }
     }
@@ -580,6 +615,14 @@ object Parser:
       }
     }
 
+  /** trait Name { field: Type ... } — Scala 3-style alias for structure */
+  private lazy val traitDecl: Parsley[SDecl] =
+    keyword("trait") *> identifier.flatMap { name =>
+      braces(many(structureField)).map { fields =>
+        SDecl.SStructure(name, fields)
+      }
+    }
+
   /** field: Type  (inside structure body) */
   private lazy val structureField: Parsley[SParam] =
     identifier.flatMap { name =>
@@ -591,6 +634,16 @@ object Parser:
   /** instance instName: StructName { field = expr  field2 = expr2 } */
   private lazy val instanceDecl: Parsley[SDecl] =
     keyword("instance") *> identifier.flatMap { name =>
+      op(":") *> identifier.flatMap { structName =>
+        braces(many(instanceBinding)).map { bindings =>
+          SDecl.SInstance(name, structName, bindings)
+        }
+      }
+    }
+
+  /** given instName: StructName { field = expr ... } — Scala 3-style alias for instance */
+  private lazy val givenDecl: Parsley[SDecl] =
+    keyword("given") *> identifier.flatMap { name =>
       op(":") *> identifier.flatMap { structName =>
         braces(many(instanceBinding)).map { bindings =>
           SDecl.SInstance(name, structName, bindings)
@@ -628,11 +681,11 @@ object Parser:
   )
 
   private val keywords = Set(
-    "inductive", "def", "defspec", "theorem", "case", "match", "by",
+    "inductive", "enum", "def", "defspec", "theorem", "case", "match", "by",
     "trivial", "triv", "rfl", "assume", "intro", "intros",
     "apply", "exact", "simplify", "simp",
     "induction", "sorry", "fun", "Pi", "Type",
-    "structure", "instance", "operator",
+    "structure", "trait", "instance", "given", "operator",
     "have", "rewrite", "rw", "calc", "let", "in",
     "try", "first", "repeat", "all_goals", "skip",
     "assumption", "contradiction", "cases",

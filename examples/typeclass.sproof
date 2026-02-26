@@ -1,0 +1,35 @@
+// Type class example: Add structure
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+// Type class declaration: Add has an addition operation and a zero element
+structure Add {
+  add: Nat -> Nat -> Nat
+  zero: Nat
+}
+
+// Instance for Nat
+instance addNat: Add {
+  add  = plus
+  zero = Nat.zero
+}
+
+// Operator with mandatory type annotation (user confirmed this is good design!)
+operator (x: Nat) + (y: Nat): Nat = plus(x, y)
+
+// Now we can use + syntax
+def addThree(a: Nat, b: Nat, c: Nat): Nat = a + b + c
+
+// Prove a theorem using the operator
+defspec plus_zero_left(n: Nat): Nat.zero + n = n {
+  by trivial
+}

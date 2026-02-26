@@ -4,6 +4,7 @@
 
 sproof は Scala 3 で書かれた依存型定理証明系です。Scala・Java・Rust・C++ を知っているプログラマーが、形式的検証を自然に書けることを目指しています。
 
+[![CI](https://github.com/kmizu/sproof/actions/workflows/ci.yml/badge.svg)](https://github.com/kmizu/sproof/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---

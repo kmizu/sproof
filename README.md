@@ -4,6 +4,7 @@
 
 sproof is a dependently-typed theorem prover written in Scala 3. It aims to make formal verification accessible to programmers who already know Scala, Java, Rust, or C++.
 
+[![CI](https://github.com/kmizu/sproof/actions/workflows/ci.yml/badge.svg)](https://github.com/kmizu/sproof/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---

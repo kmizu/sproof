@@ -31,7 +31,7 @@ object Kernel:
     (proof, Eq.extract(claimedType)) match
       case (Term.Con("refl", "Eq", List(a)), Some(triple)) =>
         val (tpe, lhs, rhs) = triple
-        val env = buildEnv(ctx)
+        val env = buildEnvWithDefs(ctx)
         // refl(a) : Eq T a a  iff  a ≡ lhs ≡ rhs (definitionally)
         if Quote.convEqual(ctx.size, env, a, lhs) &&
            Quote.convEqual(ctx.size, env, lhs, rhs) then
@@ -51,5 +51,11 @@ object Kernel:
   def infer(ctx: Context, term: Term)(using env: GlobalEnv): Either[TypeError, Term] =
     Bidirectional.infer(ctx, term)
 
-  private def buildEnv(ctx: Context): Env =
-    (0 until ctx.size).toList.map(i => Semantic.freshVar(ctx.size - 1 - i))
+  private def buildEnvWithDefs(ctx: Context): Env =
+    ctx.entries.reverse.foldLeft(List.empty[Semantic]) { (partialEnv, entry) =>
+      entry match
+        case Context.Entry.Assum(_, _) =>
+          Semantic.freshVar(partialEnv.size) :: partialEnv
+        case Context.Entry.Def(_, _, defn) =>
+          Eval.eval(partialEnv, defn) :: partialEnv
+    }

@@ -43,10 +43,10 @@ object Main:
       case Left(err) =>
         System.err.println(s"Error: $err")
         sys.exit(1)
-      case Right(env) =>
+      case Right((env, specCount)) =>
         val indCount  = env.inductives.size
         val defCount  = env.defs.size
-        println(s"OK: $filePath — $indCount inductive(s), $defCount definition(s)")
+        println(s"OK: $filePath — $indCount inductive(s), $defCount definition(s), $specCount defspec(s)")
 
   /** Parse, elaborate, and check a source string.
     *
@@ -54,12 +54,12 @@ object Main:
     * @param fileName file name for error reporting
     * @return the final GlobalEnv on success, or an error message
     */
-  def processSource(source: String, fileName: String = "<input>"): Either[String, GlobalEnv] =
+  def processSource(source: String, fileName: String = "<input>"): Either[String, (GlobalEnv, Int)] =
     for
       decls  <- Parser.parseProgram(source).left.map(e => s"Parse error in $fileName:\n$e")
       result <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error in $fileName: ${e.message}")
       env    <- Checker.checkAll(result)
-    yield env
+    yield (env, result.defspecs.size)
 
   // ---- REPL ----
 
@@ -118,16 +118,18 @@ object Main:
       result <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error: ${e.message}")
       newEnv <- Checker.checkAll(result)
     yield
-      val indNames  = newEnv.inductives.keys.toList.sorted
-      val defNames  = newEnv.defs.keys.toList.sorted
-      val summary   = buildSummary(indNames, defNames)
+      val indNames   = newEnv.inductives.keys.toList.sorted
+      val defNames   = newEnv.defs.keys.toList.sorted
+      val specNames  = result.defspecs.keys.toList.sorted
+      val summary    = buildSummary(indNames, defNames, specNames)
       (newEnv, summary)
 
   /** Summarise what is now defined in the environment. */
-  private def buildSummary(indNames: List[String], defNames: List[String]): String =
+  private def buildSummary(indNames: List[String], defNames: List[String], specNames: List[String] = Nil): String =
     val parts = List(
-      if indNames.nonEmpty then Some(s"inductive: ${indNames.mkString(", ")}") else None,
-      if defNames.nonEmpty then Some(s"defined: ${defNames.mkString(", ")}") else None,
+      if indNames.nonEmpty  then Some(s"inductive: ${indNames.mkString(", ")}") else None,
+      if defNames.nonEmpty  then Some(s"defined: ${defNames.mkString(", ")}") else None,
+      if specNames.nonEmpty then Some(s"proved: ${specNames.mkString(", ")}") else None,
     ).flatten
     if parts.isEmpty then "OK (no definitions)"
     else "OK — " + parts.mkString("; ")

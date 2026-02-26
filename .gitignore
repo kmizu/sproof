@@ -4,7 +4,16 @@ target/
 .idea/
 *.class
 .scala-build/
-core-native/
 node_modules/
 out/
 vscode-sproof/node_modules/
+# Native stub directories (sources shared from JVM modules, no source files here)
+core-native/target/
+eval-native/target/
+checker-native/target/
+tactic-native/target/
+syntax-native/target/
+extract-native/target/
+kernel-native/target/
+cli-native/target/
+native-root/target/

@@ -11,9 +11,28 @@ def plus(n: Nat, m: Nat): Nat {
   }
 }
 
+// plus(zero, m) = m holds by definition (trivial)
+defspec plus_zero_left(m: Nat): plus(Nat.zero, m) = m program = {
+  by trivial
+}
+
+// plus(succ(n), m) = succ(plus(n, m)) holds by definition (trivial)
+defspec plus_succ_left(n: Nat, m: Nat): plus(Nat.succ(n), m) = Nat.succ(plus(n, m)) program = {
+  by trivial
+}
+
+// Reflexivity: n = n (by induction — trivial in each case)
 defspec refl(n: Nat): n = n program = {
   by induction n {
     case zero => trivial
     case succ k => trivial
+  }
+}
+
+// plus(n, zero) = n (requires induction with IH)
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = {
+  by induction n {
+    case zero => trivial
+    case succ k ih => simplify [ih]
   }
 }

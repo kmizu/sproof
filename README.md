@@ -1,17 +1,19 @@
 # sproof
 
-**やさしい定理証明系 — A Proof Assistant for Programmers**
+**A Proof Assistant for Programmers**
 
-Scala 3 で書かれた、プログラマーのための依存型定理証明系。
+sproof is a dependently-typed theorem prover written in Scala 3. It aims to make formal verification accessible to programmers who already know Scala, Java, Rust, or C++.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## なぜ sproof？
+## Why sproof?
 
-従来の proof assistant（Coq・Lean・Agda）が一般プログラマーに広まらなかった理由は、型理論の難しさだけではありません。**構文という UI が「プログラマーに使ってもらう気がない」設計**だったことも大きな原因です。
+Traditional proof assistants (Coq, Lean, Agda) haven't reached mainstream programmers — not just because dependent types are hard, but because **the syntax acts as an unnecessary barrier**.
 
 ```coq
-(* Coq — 初見で読める？ *)
+(* Coq — readable without prior knowledge? *)
 Fixpoint plus (n m : nat) : nat :=
   match n with
   | O => m
@@ -25,7 +27,7 @@ Qed.
 ```
 
 ```scala
-// sproof — Scala/Java/Rust を知っていれば読める
+// sproof — readable if you know Scala/Java/Rust
 def plus(n: Nat, m: Nat): Nat {
   match n {
     case Nat.zero    => m
@@ -33,56 +35,61 @@ def plus(n: Nat, m: Nat): Nat {
   }
 }
 
-// defspec: 仕様を書いて、証明プログラムが型エラーになれば失敗
-defspec plus_zero(n: Nat): plus(n, Nat.zero) = n program = {
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = {
   by induction n {
-    case zero    => trivial
-    case succ k ih => simplify [plus, ih]
+    case zero      => trivial
+    case succ k ih => simplify [ih]
   }
 }
 ```
 
-sproof が目指すのは「**本質的な難しさだけを残す**」こと。
+sproof's design principle: **keep only the essential complexity**.
 
-- **学習コスト = 型理論の概念のみ** — 構文は追加コストにしない
-- **ブレース `{ }` で統一** — Java/Rust/Scala を知る人が初見で読める
-- **フルスペルの英単語タクティク** — `trivial`, `induction`, `simplify`（暗号略語なし）
-- **省略形も提供** — `triv`, `induct`, `simp`（略し方が自明なもののみ）
-- **丁寧なエラーメッセージ** — 内部用語ではなく、次のステップを示す
-
----
-
-## 特徴
-
-| | Coq | Lean 4 | sproof |
-|--|-----|--------|--------|
-| 実装言語 | OCaml | C++ | **Scala 3** |
-| 型理論 | CIC | CIC | **Predicative CIC** |
-| 構文 | 数学者向け | 改善されたが独自 | **Scalaライク、ブレース統一** |
-| Extraction | OCaml/Haskell | Lean自身 | **Scala 3（デフォルト）** |
-| Native バイナリ | なし | なし | **Scala Native 対応** |
-| タクティク名 | `rfl`, `intros` | `rfl`, `intro` | **`trivial`, `assume`** |
+- **Learning cost = type theory concepts only** — syntax adds no extra burden
+- **Uniform brace `{ }` syntax** — familiar to anyone who knows Java, Rust, or Scala
+- **Full English tactic names** — `trivial`, `induction`, `simplify` (no cryptic abbreviations)
+- **Short aliases available** — `triv`, `induct`, `simp` (only self-evident abbreviations)
+- **Helpful error messages** — point to the next step, not internal jargon
 
 ---
 
-## クイックスタート
+## Comparison
+
+|                    | Coq        | Lean 4       | sproof                  |
+|--------------------|------------|--------------|-------------------------|
+| Implementation     | OCaml      | C++          | **Scala 3**             |
+| Type theory        | CIC        | CIC          | **Predicative CIC**     |
+| Syntax             | Math-first | Improved DSL | **Scala-like, braces**  |
+| Extraction target  | OCaml/Haskell | Lean itself | **Scala 3 (default)**  |
+| Native binary      | —          | —            | **Scala Native**        |
+| Reflexivity tactic | `rfl`      | `rfl`        | **`trivial`**           |
+| Intro tactic       | `intros`   | `intro`      | **`assume`**            |
+
+---
+
+## Quick Start
 
 ```bash
-# ビルド
-sbt cliJVM/run
+# Clone and build
+git clone https://github.com/kmizu/sproof
+cd sproof
+sbt cli/run
 
-# ファイルをチェック
-sproof check examples/nat.sproof
+# Check a proof file
+sbt "cli/run check examples/nat.sproof"
+```
 
-# Scala 3 に抽出
-sproof extract examples/nat.sproof --output Nat.scala
+### Output
+
+```
+OK: examples/nat.sproof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
 ---
 
-## 構文ガイド
+## Language Guide
 
-### 帰納型
+### Inductive Types
 
 ```scala
 inductive Nat {
@@ -94,12 +101,17 @@ inductive List(A: Type) {
   case nil: List(A)
   case cons(head: A, tail: List(A)): List(A)
 }
+
+inductive Bool {
+  case true:  Bool
+  case false: Bool
+}
 ```
 
-### 関数定義
+### Function Definitions
 
 ```scala
-// ブロック形式
+// Block body
 def plus(n: Nat, m: Nat): Nat {
   match n {
     case Nat.zero    => m
@@ -107,118 +119,192 @@ def plus(n: Nat, m: Nat): Nat {
   }
 }
 
-// 短い場合は = 式
+// Expression body
 def id(x: Nat): Nat = x
 ```
 
-### 仕様定義（defspec）
+### Specification Definitions (`defspec`)
 
-`defspec` は「仕様を書いて、証明プログラムが型エラーになれば失敗」という設計思想のキーワードです。Curry-Howard 同型対応: **命題 = 型**、**証明 = プログラム**。
+`defspec` expresses the Curry-Howard correspondence directly:
+**proposition = type**, **proof = program**.
+
+```
+defspec name(params): proposition program = { proof }
+```
+
+Symmetry with `def`:
 
 ```scala
-// defspec 名前(引数): 仕様（命題） program = { 証明プログラム }
+def     foo(n: Nat): Nat  =         { n }          // function: program for a type
+defspec bar(n: Nat): P(n) program = { ... }        // spec: proof program for a proposition
+```
 
-// 項証明（直接 term を書く）
-defspec plus_zero(n: Nat): plus(n, Nat.zero) = n program = {
-  match n {
-    case Nat.zero    => trivial
-    case Nat.succ(k) => congrArg(Nat.succ, plus_zero(k))
-  }
+If the proof program has the wrong type, it is rejected — just like a type error in regular code.
+
+### Tactic Proofs
+
+```scala
+// Trivial: both sides reduce to the same term
+defspec plus_zero_left(m: Nat): plus(Nat.zero, m) = m program = {
+  by trivial
 }
 
-// タクティク証明（by ブロック）
-defspec plus_comm(n m: Nat): plus(n, m) = plus(m, n) program = {
+// Induction with induction hypothesis
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = {
   by induction n {
-    case zero    => simplify [plus]
-    case succ k ih => simplify [plus, ih]
+    case zero      => trivial
+    case succ k ih => simplify [ih]
   }
 }
 ```
 
-`def` との対称性:
-```scala
-def    foo(n: Nat): Nat    = { ... }   // 関数定義: 型に対してプログラムを与える
-defspec bar(n: Nat): P(n)  program = { ... }  // 仕様定義: 命題に対して証明プログラムを与える
-```
-
-### タクティク一覧
-
-| タクティク | 省略形 | 意味 |
-|-----------|--------|------|
-| `trivial` | `triv` | 自明なゴールを閉じる（両辺が等しいなど） |
-| `simplify [lemmas]` | `simp` | 補題を使って簡約する |
-| `induction x` | `induct x` | `x` の型で帰納法を適用 |
-| `assumption x` | `assume x` | 前提 `x` をコンテキストに導入 |
-| `apply f` | — | `f` を現在のゴールに適用 |
-| `cases x` | — | `x` のコンストラクタでケース分割 |
-| `have h : T = proof` | — | ローカル補題を定義 |
-| `calc { ... }` | — | 等式の連鎖推論 |
-| `ring` | — | 環の等式を自動証明 |
-| `sorry` | — | 未完プレースホルダー（警告付き） |
-
-**初心者へ**: まずフルスペル（`trivial`, `induction`, `simplify`）で書いてください。意味がわかってから省略形を使うのが近道です。
-
-### 演算子定義
+### Term Proofs (direct Curry-Howard terms)
 
 ```scala
-operator (x: Nat) + (y: Nat): Nat = plus(x, y)
+defspec refl_intro(n: Nat): n = n program = {
+  by induction n {
+    case zero   => trivial
+    case succ k => trivial
+  }
+}
 ```
 
 ---
 
-## Scala 3 への Extraction
+## Tactic Reference
 
-sproof の証明から Scala 3 コードを自動生成できます。命題（証明）は実行時に消去され、計算部分だけが残ります。
+| Tactic                   | Alias      | Effect                                                        |
+|--------------------------|------------|---------------------------------------------------------------|
+| `trivial`                | `triv`     | Close goal when both sides are definitionally equal           |
+| `simplify [f, g, ...]`   | `simp`     | Rewrite using listed lemmas, then check trivially             |
+| `induction x { ... }`   | `induct x` | Split on constructors of `x`; adds IH for recursive cases    |
+| `assumption x`           | `assume x` | Introduce `x : A` into context, shifting goal to `B`         |
+| `apply f`                | —          | Unify goal with return type of `f`; generate subgoals        |
+| `cases x { ... }`        | —          | Case-split without induction hypothesis                       |
+| `have h : T = proof`     | —          | Introduce a local lemma                                       |
+| `calc { ... }`           | —          | Chain equational reasoning steps                              |
+| `ring`                   | —          | Discharge ring-equation goals automatically                   |
+| `sorry`                  | —          | Placeholder for incomplete proofs (emits a warning)           |
+
+**Tip for beginners**: Write full names first (`trivial`, `induction`, `simplify`). Switch to aliases only once you understand what they mean.
+
+---
+
+## Coq Syntax Comparison
+
+| Concept              | Coq                     | sproof                             |
+|----------------------|-------------------------|------------------------------------|
+| Inductive type       | `Inductive Nat : Set :=` | `inductive Nat {`                 |
+| Function definition  | `Fixpoint plus ...`      | `def plus ...`                    |
+| Theorem              | `Theorem plus_zero ...`  | `defspec plus_zero ... program = {`|
+| Begin proof          | `Proof.`                 | `program = {`                     |
+| End proof            | `Qed.`                   | `}`                               |
+| Reflexivity          | `reflexivity` / `rfl`    | `trivial`                         |
+| Simplify             | `simpl` / `simp`         | `simplify` / `simp`               |
+| Introduce hypothesis | `intros`                 | `assume`                          |
+| Induction            | `induction n`            | `induction n {`                   |
+
+---
+
+## Scala 3 Extraction
+
+```bash
+sbt "cli/run extract examples/nat.sproof --output Nat.scala"
+```
+
+Proofs (propositions) are erased at runtime; only the computational content remains.
 
 ```scala
 // sproof
 def plus(n: Nat, m: Nat): Nat { ... }
-defspec plus_comm(n m: Nat): plus(n, m) = plus(m, n) program = { ... }
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = { ... }
 
-// 生成された Scala 3
+// Generated Scala 3
 def plus(n: Nat, m: Nat): Nat = ...
-def plus_comm(n: Nat, m: Nat): Unit = ()  // 証明は消去
+def plus_zero_right(n: Nat): Unit = ()   // proof erased
 ```
 
 ---
 
-## Coq との構文対比
-
-| 概念 | Coq | sproof |
-|------|-----|--------|
-| 帰納型定義 | `Inductive Nat : Set :=` | `inductive Nat {` |
-| 関数定義 | `Fixpoint plus ...` | `def plus ...` |
-| 仕様定義 | `Theorem plus_zero ...` | `defspec plus_zero ... program = {` |
-| 証明開始 | `Proof.` | `program = {` |
-| 証明終了 | `Qed.` | `}` |
-| 反射律 | `rfl` / `reflexivity` | `trivial` |
-| 簡約 | `simpl` / `simp` | `simplify` / `simp` |
-| 前提導入 | `intros` | `assume` |
-| 帰納法 | `induction n` | `induction n {` |
-
----
-
-## アーキテクチャ
+## Architecture
 
 ```
 sproof/
-├── core/      # Term ADT、De Bruijn 置換、型付けコンテキスト
-├── eval/      # NbE（Normalization by Evaluation）
-├── checker/   # 双方向型検査（bidirectional type checking）
-├── tactic/    # TacticM モナド、組み込みタクティク
-├── syntax/    # パーサー（Parsley）、表面AST、pretty-print
-├── extract/   # Scala 3 コード生成
-├── kernel/    # 信頼済みカーネル（<500行、監査可能）
-└── cli/       # REPL、ファイルローダー
+├── core/       # Term ADT, De Bruijn substitution, typing context
+├── eval/       # Normalization by Evaluation (NbE)
+├── checker/    # Bidirectional type checking
+├── tactic/     # TacticM monad, built-in tactics
+├── syntax/     # Parsley-based parser, surface AST, pretty-printer
+├── extract/    # Scala 3 code generation
+├── kernel/     # Trusted kernel (<500 lines, auditable)
+└── cli/        # REPL and file loader
 ```
 
-型理論: **Predicative CIC**（Calculus of Inductive Constructions）
-- 宇宙階層: `Type`, `Type1`, `Type2`, ...
-- 帰納型 + 不動点（再帰関数）
-- Curry-Howard 同型対応（証明 = プログラム）
+**Type theory**: Predicative CIC (Calculus of Inductive Constructions)
+- Universe hierarchy: `Type`, `Type1`, `Type2`, ...
+- Inductive types + fixpoints (recursive functions)
+- Curry-Howard isomorphism (proof = program)
 
 ---
 
-## ライセンス
+## Scala Native (native binary)
+
+sproof compiles to a self-contained native binary via [Scala Native](https://scala-native.org/). No JVM required at runtime.
+
+### Prerequisites
+
+```bash
+# Ubuntu / WSL2
+sudo apt-get install clang lld libunwind-dev
+```
+
+### Build
+
+```bash
+# Compile all modules for native (requires clang)
+sbt cliNative/nativeLink
+
+# Run the native binary
+./cli-native/target/scala-3.3.6/sproof-cli-native-out check examples/nat.sproof
+```
+
+### Performance
+
+The native binary uses `releaseFast` + `LTO.thin` + `immix` GC by default. For maximum performance (slower to link):
+
+```sbt
+// in build.sbt, change releaseFast → releaseFull in nativeLinkSettings
+```
+
+### Checking native compilation (without linking)
+
+```bash
+# Compile all native modules (only requires Scala Native sbt plugin, no LLVM):
+sbt cliNative/compile
+```
+
+---
+
+## sbt Plugin
+
+See [sbt-sproof](sbt-sproof/README.md) for integrating sproof into an sbt build.
+
+```sbt
+// project/plugins.sbt
+addSbtPlugin("io.sproof" % "sbt-sproof" % "0.1.0")
+
+// build.sbt
+enablePlugins(SproofPlugin)
+```
+
+```bash
+sbt sproofCheck    # Type-check all .sproof files
+sbt sproofExtract  # Extract to Scala 3 source (runs before compile)
+sbt sproofRepl     # Interactive REPL
+```
+
+---
+
+## License
 
 MIT

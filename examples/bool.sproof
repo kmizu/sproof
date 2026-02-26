@@ -3,3 +3,74 @@ inductive Bool {
   case true: Bool
   case false: Bool
 }
+
+def not(b: Bool): Bool {
+  match b {
+    case Bool.true  => Bool.false
+    case Bool.false => Bool.true
+  }
+}
+
+def and(b1: Bool, b2: Bool): Bool {
+  match b1 {
+    case Bool.true  => b2
+    case Bool.false => Bool.false
+  }
+}
+
+def or(b1: Bool, b2: Bool): Bool {
+  match b1 {
+    case Bool.true  => Bool.true
+    case Bool.false => b2
+  }
+}
+
+// Double negation: not(not(b)) = b
+defspec not_not(b: Bool): not(not(b)) = b program = {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+// Idempotence of and: and(b, b) = b
+defspec and_idem(b: Bool): and(b, b) = b program = {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+// and with true on the right: and(b, Bool.true) = b
+defspec and_true(b: Bool): and(b, Bool.true) = b program = {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+// or with false on the right: or(b, Bool.false) = b
+defspec or_false(b: Bool): or(b, Bool.false) = b program = {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+// and with false on the right: and(b, Bool.false) = Bool.false
+defspec and_false(b: Bool): and(b, Bool.false) = Bool.false program = {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+// or with true on the right: or(b, Bool.true) = Bool.true
+defspec or_true(b: Bool): or(b, Bool.true) = Bool.true program = {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+

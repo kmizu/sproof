@@ -16,7 +16,7 @@ class MainSuite extends FunSuite:
          |""".stripMargin
     val result = Main.processSource(source, "Bool")
     assert(result.isRight, s"expected Right but got: $result")
-    val env = result.toOption.get
+    val (env, _) = result.toOption.get
     assert(env.inductives.contains("Bool"), "GlobalEnv should contain Bool")
   }
 
@@ -36,7 +36,7 @@ class MainSuite extends FunSuite:
          |""".stripMargin
     val result = Main.processSource(source, "Nat+plus")
     assert(result.isRight, s"expected Right but got: $result")
-    val env = result.toOption.get
+    val (env, _) = result.toOption.get
     assert(env.inductives.contains("Nat"), "GlobalEnv should contain Nat")
     assert(env.defs.contains("plus"), "GlobalEnv should contain plus")
   }

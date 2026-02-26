@@ -37,7 +37,7 @@ object Builtins:
           TacticM.fail(TacticError.NotAnEquality(goal.target.show))
         case Some(triple) =>
           val (_, lhs, rhs) = triple
-          val env = buildEnv(goal.ctx)
+          val env = buildEnvWithDefs(goal.ctx)
           if Quote.convEqual(goal.ctx.size, env, lhs, rhs) then
             TacticM.solveGoalWith(mv, Eq.mkRefl(lhs))
           else
@@ -102,7 +102,7 @@ object Builtins:
           // The codomain after substituting the argument (not yet known).
           // For non-dependent cod, Var(0) does not appear; substitute Uni(0) as dummy.
           val codClosed = Subst.subst(Term.Uni(0), cod)
-          val env       = buildEnv(goal.ctx)
+          val env       = buildEnvWithDefs(goal.ctx)
           if Quote.convEqual(goal.ctx.size, env, codClosed, goal.target) then
             for
               argMv <- TacticM.addGoal(goal.ctx, dom)
@@ -129,32 +129,154 @@ object Builtins:
    *  3. For each constructor:
    *     - Non-recursive (e.g., `zero`): subgoal with `n` substituted by `zero`
    *     - Recursive (e.g., `succ k`): subgoal with `n` substituted by `succ(k)`,
-   *       extended context adds `k : T` (and IH in future phases)
-   *  4. The proof term is `Mat(Var(i), matchCases, returnTpe)`
+   *       extended context adds `k : T`, and optionally `ih : P(k)` via Fix
+   *  4. If any case has an IH requested (extraBindings > ctorDef.argTpes.length),
+   *     the proof term is wrapped in a Fix to provide the recursive hypothesis.
+   *     Otherwise: plain `Mat(Var(i), matchCases, returnTpe)`.
    *
    *  NOTE: Context variable must have an inductive type present in GlobalEnv.
    */
-  def induction(varName: String)(using env: GlobalEnv): TacticM[Unit] =
+  def induction(varName: String, caseSpecs: List[(String, List[String])] = Nil)(using env: GlobalEnv): TacticM[Unit] =
     for
       goalPair     <- TacticM.currentGoal
       (mv, goal)    = goalPair
-      // Find variable by name in context
       varIdxTpe    <- TacticM.liftEither(findVarByName(goal.ctx, varName))
       (varIdx, varTpe) = varIdxTpe
-      // Extract inductive type name (raw, no whnf — avoids NbE name loss)
       indName      <- TacticM.liftEither(extractIndNameRaw(varTpe))
-      // Look up inductive definition
       indDef       <- TacticM.liftEither(
                         env.lookupInd(indName).toRight(
                           TacticError.Custom(s"Unknown inductive type '$indName' in GlobalEnv")
                         )
                       )
-      // Generate subgoals for each constructor
-      matchCases   <- generateInductionCases(goal.ctx, varIdx, goal.target, indDef)
-      // Proof term: Mat(Var(varIdx), matchCases, returnTpe)
-      matTerm       = Term.Mat(Term.Var(varIdx), matchCases.map(_._3), goal.target)
-      _            <- TacticM.solveGoalWith(mv, matTerm)
+      // Determine if any case requests IH (extraBindings > ctor arg count)
+      needsIH       = caseSpecs.exists { case (ctorName, bindings) =>
+                        indDef.ctors.find(_.name == ctorName)
+                          .exists(ctor => bindings.length > ctor.argTpes.length)
+                      }
+      _            <- (if needsIH
+                       then inductionWithIH(mv, goal, varIdx, varTpe, indDef, caseSpecs)
+                       else plainInduction(mv, goal, varIdx, indDef))
     yield ()
+
+  private def plainInduction(
+    mv:     MetaVar,
+    goal:   Goal,
+    varIdx: Int,
+    indDef: IndDef,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    for
+      matchCases <- generateInductionCases(goal.ctx, varIdx, goal.target, indDef)
+      matTerm     = Term.Mat(Term.Var(varIdx), matchCases.map(_._3), goal.target)
+      _          <- TacticM.solveGoalWith(mv, matTerm)
+    yield ()
+
+  /** Induction with induction hypothesis (Fix-wrapped proof term).
+   *
+   *  Proof term structure:
+   *  {{{
+   *    App(
+   *      Fix("_rec", Pi("_n", T, P),
+   *        Lam("_n", T,
+   *          Mat(Var(0), [zero_case, succ_Let_case], P))),
+   *      Var(varIdx))
+   *  }}}
+   *  where P = propWithVar0 (the motive, goal with Var(0) as induction var).
+   *  For the succ case: Let("ih", P, App(Var(2), Var(0)), Meta(mv_succ)).
+   */
+  private def inductionWithIH(
+    mv:        MetaVar,
+    goal:      Goal,
+    varIdx:    Int,
+    varTpe:    Term,
+    indDef:    IndDef,
+    caseSpecs: List[(String, List[String])],
+  )(using env: GlobalEnv): TacticM[Unit] =
+    // propWithVar0 = the motive (goal with Var(varIdx) as Var(0)).
+    // For varIdx=0 (common case with single-variable context): propWithVar0 = goal.target.
+    val propWithVar0 = goal.target
+    val ctx_minus    = removeFromContext(goal.ctx, varIdx)
+    for
+      fixCasesData <- buildFixCases(ctx_minus, varIdx, goal.target, propWithVar0, indDef, caseSpecs)
+      fixCases      = fixCasesData.map(_._1)
+      // Fix("_rec", Pi("_n", T, P), Lam("_n", T, Mat(Var(0), cases, P)))
+      fixTerm       = Term.Fix("_rec",
+                        Term.Pi("_n", varTpe, propWithVar0),
+                        Term.Lam("_n", varTpe,
+                          Term.Mat(Term.Var(0), fixCases, propWithVar0)))
+      proofTerm     = Term.App(fixTerm, Term.Var(varIdx))
+      _            <- TacticM.solveGoalWith(mv, proofTerm)
+    yield ()
+
+  /** Build Fix-style match cases for each constructor.
+   *  Returns list of (MatchCase, subCtx, subGoal).
+   */
+  private def buildFixCases(
+    ctx_minus:   Context,
+    varIdx:      Int,
+    goal:        Term,
+    propWithVar0: Term,
+    indDef:      IndDef,
+    caseSpecs:   List[(String, List[String])],
+  )(using env: GlobalEnv): TacticM[List[(MatchCase, Context, Term)]] =
+    indDef.ctors.foldLeft(TacticM.pure(List.empty[(MatchCase, Context, Term)])) { (acc, ctorDef) =>
+      acc.flatMap { cases =>
+        val extraBindings = caseSpecs
+          .collectFirst { case (name, bindings) if name == ctorDef.name => bindings }
+          .getOrElse(Nil)
+        val hasIH = extraBindings.length > ctorDef.argTpes.length
+        buildFixCase(ctx_minus, varIdx, goal, propWithVar0, indDef, ctorDef, hasIH).map { triple =>
+          cases :+ triple
+        }
+      }
+    }
+
+  /** Build a single Fix-style match case for one constructor.
+   *
+   *  Non-recursive (no IH): plain MatchCase with meta placeholder.
+   *  Recursive (IH): Let-wrapped body; IH = _rec applied to the recursive arg.
+   *
+   *  Context structure inside the Fix>Lam>Mat body for a ctor with n args:
+   *    Var(0)   = last ctor arg (k for succ)
+   *    Var(1)   = _n  (Lam binder)
+   *    Var(2)   = _rec (Fix binder)
+   *    Var(3+)  = outer context vars
+   *
+   *  For the IH Let: Let("ih", P, App(Var(n+1), Var(0)), Meta(mv))
+   *    where Var(n+1) = _rec and Var(0) = the last (recursive) ctor arg.
+   */
+  private def buildFixCase(
+    ctx_minus:   Context,
+    varIdx:      Int,
+    goal:        Term,
+    propWithVar0: Term,
+    indDef:      IndDef,
+    ctorDef:     CtorDef,
+    hasIH:       Boolean,
+  )(using env: GlobalEnv): TacticM[(MatchCase, Context, Term)] =
+    val n          = ctorDef.argTpes.length
+    val ctorArgVars = (0 until n).toList.map(i => Term.Var(n - 1 - i))
+    val ctorTerm   = Term.Con(ctorDef.name, indDef.name, ctorArgVars)
+    val specialGoal = specializeGoal(goal, varIdx, ctorTerm, n)
+    val ctorCtx    = ctorDef.argTpes.foldLeft(ctx_minus)((c, tpe) => c.extend("_", tpe))
+    if !hasIH then
+      for mv <- TacticM.addGoal(ctorCtx, specialGoal)
+      yield (MatchCase(ctorDef.name, n, Term.Meta(mv.id)), ctorCtx, specialGoal)
+    else
+      // IH type = propWithVar0 (P with Var(0) = the recursive ctor arg = Var(0) in case body ctx)
+      // _rec is at Var(n+1) in the case body context (n ctor arg binders + 1 Lam binder above)
+      // The recursive arg (last, = Var(0)) is passed to _rec.
+      val ihType       = propWithVar0          // P(k): P with Var(0)=k in case body ctx
+      val recFuncRef   = Term.Var(n + 1)       // _rec (at depth n+1 in case body)
+      val recArgRef    = Term.Var(0)           // k: the (last) recursive ctor arg
+      val ihDef        = Term.App(recFuncRef, recArgRef)
+      // Sub-goal context: [ih: shift(1,P), k: T, ...ctx_minus...]
+      val ihTypeInSub  = Subst.shift(1, ihType)   // shift for the ih binder
+      val subCtx       = ctorCtx.extend("ih", ihTypeInSub)
+      val specialGoalInSub = Subst.shift(1, specialGoal)
+      for mv <- TacticM.addGoal(subCtx, specialGoalInSub)
+      yield
+        val letBody = Term.Let("ih", ihType, ihDef, Term.Meta(mv.id))
+        (MatchCase(ctorDef.name, n, letBody), subCtx, specialGoalInSub)
 
   /** Generate subgoals and MatchCase placeholders for induction on a variable.
    *
@@ -276,21 +398,79 @@ object Builtins:
 
   // ---- simplify ----
 
-  /** Simplify the current goal using NbE normalization, then close with `trivial`.
+  /** Simplify the current goal, optionally using named equality hypotheses as rewrite rules.
    *
-   *  `simplify lemmas` on goal `Eq T lhs rhs`:
-   *  1. Normalizes `lhs` and `rhs` via NbE (unfolds Fix, reduces beta/iota, etc.)
-   *  2. If the normalized sides are definitionally equal, closes with `refl`
+   *  `simplify []` / `simplify` — delegates to `trivial` (NbE definitional equality).
    *
-   *  NOTE: Context-lemma rewriting (e.g., `simplify [ih]`) comes in a later phase.
-   *  For now, `lemmas` parameter is accepted but only NbE normalization is performed.
+   *  `simplify [ih]` where `ih : lhs = rhs` — applies the J-rule (congruence):
+   *    given goal `Eq(f(lhs), f(rhs))`, constructs the J-rule proof term:
+   *    `Mat(ih, [refl(x) => refl(f(lhs_shifted))], P)` where `P(x) = Eq(f(lhs), f(x))`.
+   *    Currently handles single-constructor-application wrappers, e.g. `succ(lhs) = succ(rhs)`.
    *
-   *  Corresponds to `simp` / `simplify` in Coq/Lean.
+   *  Falls back to `trivial` if the pattern is not recognised.
    */
   def simplify(lemmas: List[String] = Nil)(using env: GlobalEnv): TacticM[Unit] =
-    // Simply delegate to trivial after NbE normalization.
-    // trivial already normalizes lhs/rhs via Quote.convEqual (which uses NbE internally).
-    trivial
+    lemmas match
+      case Nil => trivial
+      case ihName :: _ =>
+        for
+          goalPair    <- TacticM.currentGoal
+          (mv, goal)   = goalPair
+          result      <- simplifyWithIH(mv, goal, ihName)
+        yield result
+
+  /** Try to close the goal using the J-rule with hypothesis `ihName`. */
+  private def simplifyWithIH(mv: MetaVar, goal: Goal, ihName: String)(using env: GlobalEnv): TacticM[Unit] =
+    findVarByName(goal.ctx, ihName) match
+      case Left(_) => trivial   // ih not found: fall back
+      case Right((ihIdx, ihType)) =>
+        Eq.extract(ihType) match
+          case None => trivial  // ih not an equality: fall back
+          case Some((_, lhsIh, _)) =>
+            Eq.extract(goal.target) match
+              case None => trivial  // goal not an equality: fall back
+              case Some((_, lhsGoal, rhsGoal)) =>
+                // Normalise the goal sides to reveal the constructor wrapper
+                val envForCtx  = buildEnvWithDefs(goal.ctx)
+                val normLhs    = Quote.normalize(goal.ctx.size, envForCtx, lhsGoal)
+                val normRhs    = Quote.normalize(goal.ctx.size, envForCtx, rhsGoal)
+                buildJRuleProof(mv, goal, ihIdx, lhsIh, normLhs, normRhs)
+
+  /** Build a J-rule proof for goal `Eq(normLhs, normRhs)` given `ih` at `ihIdx`.
+   *
+   *  Pattern: normLhs = Con(name, ref, [l]) and normRhs = Con(name, ref, [r]).
+   *  Motive: P(x) = Eq(Con(name, ref, [shift(1, l)]), Con(name, ref, [Var(0)])).
+   *  Proof: Mat(Var(ihIdx), [MatchCase("refl", 1, refl(Con(name,[shift(1,l)])))], P).
+   */
+  private def buildJRuleProof(
+    mv:     MetaVar,
+    goal:   Goal,
+    ihIdx:  Int,
+    lhsIh:  Term,
+    normLhs: Term,
+    normRhs: Term,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    (normLhs, normRhs) match
+      case (Term.Con(lname, lref, List(l)), Term.Con(rname, rref, List(r)))
+           if lname == rname && lref == rref =>
+        // Motive: P(x) = Eq(Con(name,[shift(1,l)]), Con(name,[Var(0)]))
+        val lhsInLam  = Subst.shift(1, l)
+        val motiveBody = Term.App(
+          Term.App(Term.Ind("Eq", Nil, Nil),
+            Term.Con(lname, lref, List(lhsInLam))),
+          Term.Con(rname, rref, List(Term.Var(0))))
+        val motiveFunc = Term.Lam("x", Term.Ind(lref, Nil, Nil), motiveBody)
+        // Branch body: refl(Con(name, [shift(1, l)]))
+        val body      = Term.Con("refl", "Eq", List(Term.Con(lname, lref, List(lhsInLam))))
+        // J-rule proof: Mat(ih, [refl case], motive)
+        val proofTerm = Term.Mat(
+          Term.Var(ihIdx),
+          List(MatchCase("refl", 1, body)),
+          motiveFunc)
+        TacticM.solveGoalWith(mv, proofTerm)
+      case _ =>
+        // Pattern not recognised: try trivial as fallback
+        trivial
 
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)
@@ -312,5 +492,11 @@ object Builtins:
       s"Expected inductive type for induction, got: ${t.show}"
     ))
 
-  private def buildEnv(ctx: Context): Env =
-    (0 until ctx.size).toList.map(i => Semantic.freshVar(ctx.size - 1 - i))
+  private def buildEnvWithDefs(ctx: Context): Env =
+    ctx.entries.reverse.foldLeft(List.empty[Semantic]) { (partialEnv, entry) =>
+      entry match
+        case Context.Entry.Assum(_, _) =>
+          Semantic.freshVar(partialEnv.size) :: partialEnv
+        case Context.Entry.Def(_, _, defn) =>
+          Eval.eval(partialEnv, defn) :: partialEnv
+    }

@@ -23,6 +23,18 @@ enum Semantic:
   /** Stuck computation: a neutral head applied to a spine of arguments. */
   case SNeu(head: Neutral, spine: List[Semantic])
 
+  /** Semantic fixpoint value.
+   *
+   *  Wraps the ORIGINAL closed Fix term so that quoting is always finite.
+   *  When applied to a neutral argument, produces SNeu(NFix(originalTerm, arg), []).
+   *  When applied to a concrete argument, calls `applyFn` (which evaluates the body).
+   *
+   *  The key invariant: `originalTerm` is a closed Term.Fix; it never references
+   *  free De Bruijn variables from an outer environment (all global defs are inlined
+   *  by the Elaborator, so global Fix terms are always closed).
+   */
+  case SFixPoint(name: String, originalTerm: Term, applyFn: Semantic => Semantic)
+
   def isNeu: Boolean = this match
     case SNeu(_, _) => true
     case _          => false
@@ -42,11 +54,31 @@ enum Neutral:
     returnTpe: Semantic => Semantic,
   )
 
-  /** Fixed point applied to a neutral argument (needed for stuck recursion). */
-  case NFix(name: String, body: Semantic => Semantic, arg: Neutral)
+  /** Fixed point applied to a neutral first argument.
+   *
+   *  `originalTerm` is the closed Term.Fix for the fixpoint; quoting it
+   *  produces `App(originalTerm, quoteNeutral(arg))` — always finite.
+   */
+  case NFix(originalTerm: Term, arg: Neutral)
 
-/** One case branch in a neutral match, represented as a closure over ctor args. */
-case class NeutralCase(ctor: String, bindings: Int, body: List[Semantic] => Semantic)
+  /** Inductive type constant (distinguished by name so different types are non-equal). */
+  case NInd(name: String)
+
+/** One case branch in a neutral match, represented as a closure over ctor args.
+ *
+ *  `termBody` stores the original MatchCase and `capturedEnv` is the evaluation
+ *  environment at the time the NeutralCase was created.  `Quote.quoteNeutral`
+ *  uses these to reconstruct the branch body term by quoting each env value and
+ *  substituting — avoiding the infinite recursion that calling `body` would cause
+ *  for recursive functions like `plus`.
+ */
+case class NeutralCase(
+  ctor:        String,
+  bindings:    Int,
+  body:        List[Semantic] => Semantic,
+  termBody:    sproof.core.MatchCase,
+  capturedEnv: List[Semantic],
+)
 
 object Semantic:
   val Type0: Semantic = SUni(0)
@@ -57,6 +89,15 @@ object Semantic:
 
   /** Apply a semantic function to a semantic argument (call-by-value). */
   def apply(fn: Semantic, arg: Semantic): Semantic = fn match
-    case SLam(_, _, body) => body(arg)
-    case SNeu(h, sp)      => SNeu(h, sp :+ arg)
-    case other            => throw RuntimeException(s"Cannot apply non-function: $other")
+    case SLam(_, _, body)                  => body(arg)
+    case SNeu(h, sp)                       => SNeu(h, sp :+ arg)
+    case SFixPoint(_, fixTerm, applyFn)    =>
+      arg match
+        case SNeu(h, sp) =>
+          // Neutral argument: create a stuck NFix neutral rather than evaluating the body.
+          // This prevents infinite recursion during quoting.
+          SNeu(Neutral.NFix(fixTerm, h), sp)
+        case _ =>
+          // Concrete argument: evaluate via the closure (terminates for structural recursion).
+          applyFn(arg)
+    case other => throw RuntimeException(s"Cannot apply non-function: $other")

@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ---- JVM: compile + test ----
+  test:
+    name: Test (JVM, Scala 3.3.6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+
+      - name: Run tests
+        run: sbt test
+
+      - name: Check nat.sproof end-to-end
+        run: sbt "cli/run check examples/nat.sproof"
+
+  # ---- Scala Native: compile + link ----
+  native:
+    name: Native binary (Scala Native 0.5.10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+
+      - name: Install LLVM / clang
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y clang lld libunwind-dev
+
+      - name: Compile native modules
+        run: sbt cliNative/compile
+
+      - name: Link native binary
+        run: sbt cliNative/nativeLink
+
+      - name: Smoke-test native binary
+        run: |
+          BINARY=$(find cli-native/target -name "sproof-cli-native" -type f | head -1)
+          echo "Binary: $BINARY ($(du -sh $BINARY | cut -f1))"
+          $BINARY check examples/nat.sproof
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sproof-cli-linux-amd64
+          path: cli-native/target/scala-3.3.6/sproof-cli-native
+          if-no-files-found: error
+
+  # ---- sbt plugin: compile ----
+  sbt-plugin:
+    name: sbt plugin (Scala 2.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+
+      - name: Compile sbt-sproof plugin
+        run: cd sbt-sproof && sbt compile

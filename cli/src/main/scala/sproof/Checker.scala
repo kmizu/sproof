@@ -82,7 +82,8 @@ object Checker:
       Builtins.simplify(lemmas)
 
     case STactic.SInduction(varName, cases) =>
-      Builtins.induction(varName).flatMap { _ =>
+      val caseSpecs = cases.map(c => (c.ctorName, c.extraBindings))
+      Builtins.induction(varName, caseSpecs).flatMap { _ =>
         closeRemainingGoals(cases)
       }
 
@@ -93,24 +94,33 @@ object Checker:
     case STactic.SSorry =>
       sorryCurrentGoal
 
-  /** Try to close all remaining sub-goals, using trivial or sorry as fallback. */
+  /** Close remaining sub-goals using the specified case tactics in order.
+   *
+   *  Each STacticCase is consumed one-by-one as subgoals are closed.
+   *  If no cases remain, fall back to trivial (then sorry if trivial fails).
+   */
   private def closeRemainingGoals(cases: List[STacticCase])(using env: GlobalEnv): TacticM[Unit] =
     TacticM.get.flatMap { s =>
       if s.goals.isEmpty then TacticM.pure(())
       else
-        attemptTrivialOrSorry.flatMap(_ => closeRemainingGoals(cases))
+        val (tactic, rest) = cases match
+          case caseSpec :: remaining => (tacticFromSurface(caseSpec.tactic), remaining)
+          case Nil                   => (attemptTrivialOrSorryTactic, Nil)
+        tactic.flatMap(_ => closeRemainingGoals(rest))
+    }
+
+  /** TacticM version of attemptTrivialOrSorry for use as a fallback. */
+  private def attemptTrivialOrSorryTactic(using env: GlobalEnv): TacticM[Unit] =
+    TacticM.get.flatMap { s =>
+      val (finalState, result) = TacticM.run(Builtins.trivial, s)
+      result match
+        case Right(()) => TacticM.set(finalState)
+        case Left(_)   => sorryCurrentGoal
     }
 
   /** Try trivial; if it fails fall back to sorry (discharges without proof). */
   private def attemptTrivialOrSorry(using env: GlobalEnv): TacticM[Unit] =
-    TacticM.get.flatMap { s =>
-      val (finalState, result) = TacticM.run(Builtins.trivial, s)
-      result match
-        case Right(()) =>
-          TacticM.set(finalState)
-        case Left(_) =>
-          sorryCurrentGoal
-    }
+    attemptTrivialOrSorryTactic
 
   /** Discharge the current goal with a placeholder (sorry). */
   private def sorryCurrentGoal: TacticM[Unit] =

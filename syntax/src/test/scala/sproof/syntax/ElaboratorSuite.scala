@@ -52,8 +52,9 @@ class ElaboratorSuite extends FunSuite:
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
     assert(elab.defs.contains("id"), "id should be in defs")
-    // body should be Var(0) since x is the only binding
-    assertEquals(elab.defs("id"), Term.Var(0))
+    // After Fix wrapping: Fix("id", Pi(x:Nat,Nat), Lam("x", Nat, Var(0)))
+    // The Lam body Var(0) = x (the lambda binding) ✓
+    val Term.Fix("id", _, Term.Lam("x", _, Term.Var(0))) = elab.defs("id"): @unchecked
   }
 
   test("elaborate function with two params") {
@@ -63,8 +64,10 @@ class ElaboratorSuite extends FunSuite:
     val result = parseAndElab(input)
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
-    // x is at index 1 (pushed first), y is at index 0
-    assertEquals(elab.defs("const"), Term.Var(1))
+    // nameEnv = ["y","x"], so x=Var(1), y=Var(0).
+    // After Fix wrapping: Fix("const", ..., Lam("x", _, Lam("y", _, Var(1))))
+    val Term.Fix("const", _, Term.Lam("x", _, Term.Lam("y", _, Term.Var(1)))) =
+      elab.defs("const"): @unchecked
   }
 
   test("elaborate function with constructor call") {
@@ -74,7 +77,9 @@ class ElaboratorSuite extends FunSuite:
     val result = parseAndElab(input)
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
-    assertEquals(elab.defs("zero_const"), Term.Con("zero", "Nat", Nil))
+    // After Fix wrapping: Fix("zero_const", ..., Lam("x", _, Con("zero","Nat",Nil)))
+    val Term.Fix("zero_const", _, Term.Lam("x", _, Term.Con("zero", "Nat", Nil))) =
+      elab.defs("zero_const"): @unchecked
   }
 
   test("elaborate function with match") {
@@ -89,8 +94,11 @@ class ElaboratorSuite extends FunSuite:
     val result = parseAndElab(input)
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
+    // After Fix wrapping: Fix("isZero", ..., Lam("n", _, Mat(...)))
     val body = elab.defs("isZero")
-    assert(body.isInstanceOf[Term.Mat], s"Expected Mat, got $body")
+    assert(body.isInstanceOf[Term.Fix], s"Expected Fix, got $body")
+    val Term.Fix(_, _, Term.Lam(_, _, mat)) = body: @unchecked
+    assert(mat.isInstanceOf[Term.Mat], s"Expected Mat inside Fix, got $mat")
   }
 
   test("elaborate match cases have correct bindings count") {
@@ -104,7 +112,7 @@ class ElaboratorSuite extends FunSuite:
         |}""".stripMargin
     val result = parseAndElab(input)
     val elab = result.toOption.get
-    val Term.Mat(_, cases, _) = elab.defs("isZero"): @unchecked
+    val Term.Fix(_, _, Term.Lam(_, _, Term.Mat(_, cases, _))) = elab.defs("isZero"): @unchecked
     assertEquals(cases(0).bindings, 0)
     assertEquals(cases(1).bindings, 1)
   }
@@ -190,8 +198,11 @@ class ElaboratorSuite extends FunSuite:
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
     assert(elab.defs.contains("plus"), "plus should be in defs")
+    // After Fix wrapping: Fix("plus", Pi(n:Nat, Pi(m:Nat, Nat)), Lam("n", ..., Lam("m", ..., Mat(...))))
     val body = elab.defs("plus")
-    assert(body.isInstanceOf[Term.Mat], s"Expected Mat at top level, got $body")
+    assert(body.isInstanceOf[Term.Fix], s"Expected Fix, got $body")
+    val Term.Fix("plus", _, Term.Lam("n", _, Term.Lam("m", _, mat))) = body: @unchecked
+    assert(mat.isInstanceOf[Term.Mat], s"Expected Mat inside Fix+Lam, got $mat")
   }
 
   // ===== Global env state =====

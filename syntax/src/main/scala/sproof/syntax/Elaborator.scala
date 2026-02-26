@@ -45,11 +45,11 @@ object Elaborator:
             case Left(err)   => return Left(err)
             case Right(term) =>
               defs = defs + (name -> term)
-              // Also add to global env so later defs can reference it
-              val tpeTerm = elabType(retTpe, env, Nil) match
-                case Right(t) => t
-                case Left(_)  => Term.Meta(-1) // fallback
-              env = env.addDef(DefEntry(name, tpeTerm, term))
+              // Store the full type: extract from Fix if present, else just retTpe.
+              val fullTpe = term match
+                case Term.Fix(_, tpe, _) => tpe
+                case _                   => elabType(retTpe, env, Nil).getOrElse(Term.Meta(-1))
+              env = env.addDef(DefEntry(name, fullTpe, term))
 
         case SDecl.SDefspec(name, params, prop, proof) =>
           if defspecs.contains(name) then
@@ -79,9 +79,12 @@ object Elaborator:
     ctors:  List[SCtor],
     env:    GlobalEnv,
   ): IndDef =
+    // Pre-register this inductive with an empty ctor list so self-referential
+    // constructors (e.g. succ(n: Nat): Nat) can resolve the type name.
+    val envWithSelf = env.addInd(IndDef(name, Nil, Nil, 0))
     val ctorDefs = ctors.map { ctor =>
       val argTpes = ctor.argParams.map { p =>
-        elabType(p.tpe, env, Nil).getOrElse(Term.Meta(-1))
+        elabType(p.tpe, envWithSelf, Nil).getOrElse(Term.Meta(-1))
       }
       CtorDef(ctor.name, argTpes)
     }
@@ -102,11 +105,37 @@ object Elaborator:
         case Left(err) => return Left(err)
         case _         => ()
 
-    // Build name environment: first param at highest index
+    // Build name environment: params reversed so innermost = lowest index.
+    // e.g. params=[n,m] → nameEnv=["m","n"], so m=Var(0), n=Var(1).
     val nameEnv = params.reverse.map(_.name)
-    // Also include the function name itself for recursive calls (at outermost)
-    val nameEnvWithSelf = nameEnv :+ name
-    elabExpr(body, env, nameEnv, name)
+
+    // Elaborate param types (for lambda/Pi wrappers)
+    val elabParamTpes: Either[ElabError, List[Term]] =
+      params.foldLeft(Right(Nil): Either[ElabError, List[Term]]) { (acc, p) =>
+        acc.flatMap(lst => elabType(p.tpe, env, Nil).map(tpe => lst :+ tpe))
+      }
+
+    for
+      bodyT     <- elabExpr(body, env, nameEnv, name)
+      retTpeT   <- elabType(retTpe, env, Nil)
+      paramTpes <- elabParamTpes
+    yield
+      if params.isEmpty then
+        bodyT
+      else
+        // Wrap body in lambdas: Lam(p1, Lam(p2, ..., bodyT))
+        // With params=[p1,p2], foldRight processes p2 first:
+        //   result = Lam("p1", t1, Lam("p2", t2, bodyT))
+        // Inside the innermost lambda: Var(0)=p2, Var(1)=p1, Var(nameEnv.length)=self ✓
+        val lamsBody = params.zip(paramTpes).foldRight(bodyT) { case ((p, tpe), acc) =>
+          Term.Lam(p.name, tpe, acc)
+        }
+        // Build Fix type: Pi(p1:t1, Pi(p2:t2, retTpeT))
+        val fixTpe = params.zip(paramTpes).foldRight(retTpeT) { case ((p, tpe), cod) =>
+          Term.Pi(p.name, tpe, cod)
+        }
+        // Fix("name", fixTpe, lamsBody): Var(0) in lamsBody = self-reference
+        Term.Fix(name, fixTpe, lamsBody)
 
   // ---- Type elaboration ----
 
@@ -161,16 +190,18 @@ object Elaborator:
   ): Either[ElabError, Term] =
     expr match
       case SExpr.SEVar(name) =>
-        // Check local bindings
+        // Check local bindings first
         nameEnv.indexOf(name) match
           case -1 =>
-            // Check global defs
-            if env.lookupDef(name).isDefined then
-              Right(Term.Var(nameEnv.length)) // will be resolved by Fix or global ref
-            else if name == selfName then
-              Right(Term.Var(nameEnv.length)) // self-reference placeholder
-            else
-              Left(ElabError(s"Unknown variable: $name"))
+            // Self-reference (recursive call within current def): Var(nameEnv.length)
+            // must be checked BEFORE GlobalEnv lookup so that the def being elaborated
+            // uses the Fix self-binding, not a stale GlobalEnv entry.
+            if name == selfName then
+              Right(Term.Var(nameEnv.length))
+            else env.lookupDef(name) match
+              // Inline the Fix term from GlobalEnv (it's closed, no free variables).
+              case Some(defEntry) => Right(defEntry.body)
+              case None           => Left(ElabError(s"Unknown variable: $name"))
           case i => Right(Term.Var(i))
 
       case SExpr.SEApp(fn, args) =>

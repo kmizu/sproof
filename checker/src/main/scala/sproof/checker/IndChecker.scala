@@ -62,13 +62,21 @@ object IndChecker:
       scrutTpe <- Bidirectional.infer(ctx, scrutinee)
       // NOTE: do NOT call whnf here — Eval.eval converts Ind(...) to a neutral SNeu(NVar(-1), Nil),
       // destroying the inductive type name.  Use the raw inferred type directly.
-      indName  <- extractIndName(scrutTpe)
-      indDef   <- env.lookupInd(indName).toRight(
-                    TypeError.Custom(s"Unknown inductive type '$indName'")
-                  )
-      _        <- checkCoverage(cases, indDef)
-      _        <- checkCases(ctx, scrutinee, cases, indDef, returnTpe)
-    yield returnTpe
+      result   <- extractEq(scrutTpe) match
+                    case Some((_, lhs, rhs)) =>
+                      // J-rule: Eq elimination.  returnTpe is the motive function P.
+                      // Overall type = App(P, rhs).  Branch body checked against App(P, lhs).
+                      checkEqElim(ctx, lhs, rhs, cases, returnTpe)
+                    case None =>
+                      for
+                        indName <- extractIndName(scrutTpe)
+                        indDef  <- env.lookupInd(indName).toRight(
+                                     TypeError.Custom(s"Unknown inductive type '$indName'")
+                                   )
+                        _       <- checkCoverage(cases, indDef)
+                        _       <- checkCases(ctx, scrutinee, cases, indDef, returnTpe)
+                      yield returnTpe
+    yield result
 
   // ---- private helpers ----
 
@@ -88,6 +96,45 @@ object IndChecker:
     case _ => Left(TypeError.Custom(
       s"Scrutinee must have an inductive type; got: ${t.show}"
     ))
+
+  /** Extract (tpe, lhs, rhs) from an Eq type term (2-arg or 3-arg form). */
+  private def extractEq(t: Term): Option[(Term, Term, Term)] = t match
+    case Term.App(Term.App(Term.App(Term.Ind("Eq", _, _), tpe), lhs), rhs) =>
+      Some((tpe, lhs, rhs))
+    case Term.App(Term.App(Term.Ind("Eq", _, _), lhs), rhs) =>
+      Some((Term.Meta(-1), lhs, rhs))
+    case _ =>
+      None
+
+  /** Check a J-rule (Eq elimination) match.
+   *
+   *  `Mat(scrutinee, [MatchCase("refl", 1, body)], motiveFunc)`
+   *  where `scrutinee : Eq T lhs rhs` and `motiveFunc : T → Type`.
+   *
+   *  - Branch body is checked against `App(motiveFunc, lhs)` (shifted for the refl witness).
+   *  - Overall type returned is `App(motiveFunc, rhs)`.
+   */
+  private def checkEqElim(
+    ctx:       Context,
+    lhs:       Term,
+    rhs:       Term,
+    cases:     List[MatchCase],
+    motiveFunc: Term,
+  )(using env: GlobalEnv): Either[TypeError, Term] =
+    if cases.length != 1 || cases.head.ctor != "refl" || cases.head.bindings != 1 then
+      Left(TypeError.Custom(
+        s"J-rule (Eq elimination) match must have exactly one 'refl' case with 1 binding; " +
+        s"got cases: ${cases.map(c => s"${c.ctor}/${c.bindings}").mkString(", ")}"
+      ))
+    else
+      val body = cases.head.body
+      for
+        lhsTpe       <- Bidirectional.infer(ctx, lhs)
+        branchCtx     = ctx.extend("x", lhsTpe)
+        // Branch body type = App(motiveFunc, lhs) shifted for the refl witness binder
+        branchBodyTpe = Subst.shift(1, Term.App(motiveFunc, lhs))
+        _            <- Bidirectional.check(branchCtx, body, branchBodyTpe)
+      yield Term.App(motiveFunc, rhs)
 
   /** Verify that the match cases cover exactly the constructors (no missing, no extra). */
   private def checkCoverage(

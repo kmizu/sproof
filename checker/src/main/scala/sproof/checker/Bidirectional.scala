@@ -32,7 +32,7 @@ object Bidirectional:
           _ <- inferUniverse(ctx, annTp)
           _ <- convCheck(ctx, annTp, dom, term)
           extCtx = ctx.extend(x, annTp)
-          _ <- check(extCtx, body, Subst.open(cod, Term.Var(0)))
+          _ <- check(extCtx, body, cod)
         yield ()
 
       // Let-in: check defn first, then extend context
@@ -43,6 +43,13 @@ object Bidirectional:
           extCtx = ctx.extendDef(x, tp, defn)
           _ <- check(extCtx, body, Subst.shift(1, expected))
         yield ()
+
+      // Mat with placeholder return type (Meta(-1)): use expected as the return type.
+      // Elaborated match expressions use Meta(-1) as a sentinel meaning "to be determined
+      // from context".  Rather than failing when whnf hits the sentinel, substitute the
+      // concrete expected type and check the case bodies against it.
+      case (Term.Mat(scrutinee, cases, Term.Meta(id)), _) if id < 0 =>
+        IndChecker.checkMat(ctx, scrutinee, cases, expected).map(_ => ())
 
       // Fall through: infer type and check conversion
       case _ =>
@@ -122,24 +129,41 @@ object Bidirectional:
 
   // ---- Helpers ----
 
-  /** Infer the universe level of a type expression `t`. Returns l if t : Type_l. */
+  /** Infer the universe level of a type expression `t`. Returns l if t : Type_l.
+   *
+   *  Special case: Eq type applications `Eq a b` or `Eq a` are treated as Prop-level
+   *  (universe 0).  The bidirectional checker cannot infer through `App(Ind("Eq",...), ...)`
+   *  because `Ind("Eq",...)` is typed as `Uni(0)` (not a Pi type) in the Ind case.
+   *  This shortcut avoids the NotAFunction error when computing the universe of the
+   *  Pi type inside a Fix binder whose codomain is an Eq proposition.
+   */
   def inferUniverse(ctx: Context, t: Term)(using env: GlobalEnv): Either[TypeError, Int] =
-    infer(ctx, t).flatMap { tp =>
-      whnf(ctx, tp) match
-        case Term.Uni(l) => Right(l)
-        case _           => Left(TypeError.NotAType(t, ctx))
-    }
+    t match
+      case Term.App(Term.App(Term.Ind("Eq", _, _), _), _) => Right(0)
+      case Term.App(Term.Ind("Eq", _, _), _)              => Right(0)
+      case _ =>
+        infer(ctx, t).flatMap { tp =>
+          whnf(ctx, tp) match
+            case Term.Uni(l) => Right(l)
+            case _           => Left(TypeError.NotAType(t, ctx))
+        }
 
   /** Weak-head normal form via NbE round-trip. */
   def whnf(ctx: Context, t: Term): Term =
-    Quote.normalize(ctx.size, buildEnv(ctx), t)
+    Quote.normalize(ctx.size, buildEnvWithDefs(ctx), t)
 
   /** Check definitional equality of `actual` and `expected`. */
   private def convCheck(ctx: Context, actual: Term, expected: Term, term: Term): Either[TypeError, Unit] =
-    val env = buildEnv(ctx)
+    val env = buildEnvWithDefs(ctx)
     if Quote.convEqual(ctx.size, env, actual, expected) then Right(())
     else Left(TypeError.TypeMismatch(expected, actual, term, ctx))
 
-  /** Build the NbE environment from a typing context (each var becomes a neutral). */
-  private def buildEnv(ctx: Context): Env =
-    (0 until ctx.size).toList.map(i => Semantic.freshVar(ctx.size - 1 - i))
+  /** Build the NbE environment, evaluating Def (let-binding) entries. */
+  private def buildEnvWithDefs(ctx: Context): Env =
+    ctx.entries.reverse.foldLeft(List.empty[Semantic]) { (partialEnv, entry) =>
+      entry match
+        case Context.Entry.Assum(_, _) =>
+          Semantic.freshVar(partialEnv.size) :: partialEnv
+        case Context.Entry.Def(_, _, defn) =>
+          Eval.eval(partialEnv, defn) :: partialEnv
+    }

@@ -1,30 +1,55 @@
-val scala3Version = "3.3.6"
+import scala.scalanative.build._
+
+val scala3Version  = "3.3.6"
+val parsleyVersion = "5.0.0-M19"  // JVM + Native 共通（M15+ が native 対応）
+val catsVersion    = "2.12.0"
+val munitVersion   = "1.0.2"
+
+// ---- Shared settings ----
 
 val commonSettings = Seq(
   scalaVersion := scala3Version,
   organization := "io.sproof",
   libraryDependencies ++= Seq(
-    "org.typelevel" %% "cats-core" % "2.12.0",
-    "org.scalameta" %% "munit"     % "1.0.2" % Test,
+    "org.typelevel" %% "cats-core" % catsVersion,
+    "org.scalameta" %% "munit"     % munitVersion % Test,
   ),
   testFrameworks += new TestFramework("munit.Framework"),
   scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
 )
 
-// Scala Native settings — used for the coreNative project.
-// cats-core and munit both publish native artifacts.
-val nativeSettings = Seq(
+// Scala Native settings for native sub-projects.
+// Uses %%% so cats-core and munit resolve as native artifacts.
+val nativeCommonSettings = Seq(
   scalaVersion := scala3Version,
   organization := "io.sproof",
   libraryDependencies ++= Seq(
-    "org.typelevel" %%% "cats-core" % "2.12.0",
-    "org.scalameta" %%% "munit"     % "1.0.2" % Test,
+    "org.typelevel" %%% "cats-core" % catsVersion,
+    "org.scalameta" %%% "munit"     % munitVersion % Test,
   ),
   testFrameworks += new TestFramework("munit.Framework"),
   scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
 )
 
-// ---- Root aggregate (JVM only — excludes Scala Native coreNative) ----
+// Optimised native binary config (applied only to cliNative)
+val nativeLinkSettings = Seq(
+  nativeConfig ~= {
+    _.withLTO(LTO.thin)
+     .withMode(Mode.releaseFast)   // releaseFull is slower to link; swap when releasing
+     .withGC(GC.immix)
+  },
+)
+
+// ---- Helper: share JVM project sources with a native sibling ----
+// Usage: .settings(shareSourcesWith(someJvmProject))
+def shareSourcesWith(jvmProject: Project): Seq[Setting[?]] = Seq(
+  Compile / unmanagedSourceDirectories +=
+    (jvmProject / Compile / sourceDirectory).value,
+  Test / unmanagedSourceDirectories +=
+    (jvmProject / Test / sourceDirectory).value,
+)
+
+// ---- Root aggregate (JVM only by default) ----
 lazy val root = project.in(file("."))
   .aggregate(core, nbe, checker, tactic, syntax, extract, kernel, cli)
   .settings(
@@ -32,7 +57,21 @@ lazy val root = project.in(file("."))
     publish / skip := true,
   )
 
-// ---- JVM projects (Phase 1-3) ----
+// Root aggregate for all Native projects — run explicitly:
+//   sbt nativeRoot/compile  or  sbt nativeRoot/test
+lazy val nativeRoot = project.in(file("native-root"))
+  .aggregate(coreNative, nbeNative, checkerNative, tacticNative,
+             syntaxNative, extractNative, kernelNative, cliNative)
+  .settings(
+    name := "sproof-native",
+    publish / skip := true,
+    // Exclude from the default `sbt test` run so LLVM is optional
+    aggregate := false,
+  )
+
+// ============================================================
+// JVM projects
+// ============================================================
 
 lazy val core = project.in(file("core"))
   .settings(commonSettings)
@@ -58,11 +97,11 @@ lazy val syntax = project.in(file("syntax"))
   .settings(commonSettings)
   .settings(
     name := "sproof-syntax",
-    libraryDependencies += "com.github.j-mie6" %% "parsley" % "5.0.0-M9",
+    libraryDependencies += "com.github.j-mie6" %% "parsley" % parsleyVersion,
   )
 
 lazy val extract = project.in(file("extract"))
-  .dependsOn(checker, tactic)  // tactic depends on checker which depends on nbe
+  .dependsOn(checker, tactic)
   .settings(commonSettings)
   .settings(name := "sproof-extract")
 
@@ -79,30 +118,80 @@ lazy val cli = project.in(file("cli"))
     Compile / mainClass := Some("sproof.Main"),
   )
 
-// ---- Scala Native project (opt-in, Phase 4) ----
-// coreNative compiles the trusted kernel (core module only) to native code.
-// It shares sources with the JVM `core` project via `unmanagedSourceDirectories`.
-// Dependencies: cats-core native, munit native (for tests).
+// ============================================================
+// Scala Native projects
+//
+// Each native project:
+//   - lives in a stub directory (no source files of its own)
+//   - shares sources from the JVM counterpart via unmanagedSourceDirectories
+//   - uses %%% for cross-platform deps
 //
 // PREREQUISITES (Ubuntu/WSL2):
 //   sudo apt-get install clang lld libunwind-dev
 //
-// Usage (must be explicit to avoid dependency resolution errors on systems without LLVM):
-//   sbt coreNative/compile
-//   sbt coreNative/test
-//
-// Excluded from the default aggregate (`aggregate in Global` / `sbt test`) so that
-// the JVM build does not fail when LLVM is not installed.
+// Build native CLI binary:
+//   sbt cliNative/nativeLink
+//   ./cli-native/target/scala-3.3.6/sproof-cli-native-out
+// ============================================================
+
 lazy val coreNative = project.in(file("core-native"))
   .enablePlugins(ScalaNativePlugin)
-  .settings(nativeSettings)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(core))
+  .settings(name := "sproof-core-native")
+
+lazy val nbeNative = project.in(file("eval-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(coreNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(nbe))
+  .settings(name := "sproof-eval-native")
+
+lazy val checkerNative = project.in(file("checker-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(nbeNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(checker))
+  .settings(name := "sproof-checker-native")
+
+lazy val tacticNative = project.in(file("tactic-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(checkerNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(tactic))
+  .settings(name := "sproof-tactic-native")
+
+lazy val syntaxNative = project.in(file("syntax-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(coreNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(syntax))
   .settings(
-    name := "sproof-core-native",
-    // Excluded from root aggregate: prevents "sbt test" from trying to resolve native deps
-    aggregate := false,
-    // Share sources with the JVM core project
-    Compile / unmanagedSourceDirectories +=
-      (core / Compile / sourceDirectory).value,
-    Test / unmanagedSourceDirectories +=
-      (core / Test / sourceDirectory).value,
+    name := "sproof-syntax-native",
+    libraryDependencies += "com.github.j-mie6" %%% "parsley" % parsleyVersion,
+  )
+
+lazy val extractNative = project.in(file("extract-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(checkerNative, tacticNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(extract))
+  .settings(name := "sproof-extract-native")
+
+lazy val kernelNative = project.in(file("kernel-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(checkerNative, tacticNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(kernel))
+  .settings(name := "sproof-kernel-native")
+
+lazy val cliNative = project.in(file("cli-native"))
+  .enablePlugins(ScalaNativePlugin)
+  .dependsOn(syntaxNative, tacticNative, extractNative, kernelNative)
+  .settings(nativeCommonSettings)
+  .settings(shareSourcesWith(cli))
+  .settings(nativeLinkSettings)
+  .settings(
+    name := "sproof-cli-native",
+    Compile / mainClass := Some("sproof.Main"),
   )

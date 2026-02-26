@@ -4,87 +4,136 @@ import sbt._
 import sbt.Keys._
 import sbt.plugins.JvmPlugin
 
+import scala.sys.process._
+import java.io.File
+
 object SproofPlugin extends AutoPlugin {
   override def requires = JvmPlugin
-  override def trigger = noTrigger  // opt-in: enablePlugins(SproofPlugin)
+  override def trigger  = noTrigger  // opt-in: enablePlugins(SproofPlugin)
 
   object autoImport {
     // Tasks
-    val sproofCheck   = taskKey[Unit]("Type-check all .sproof files")
-    val sproofExtract = taskKey[Seq[File]]("Extract .sproof files to Scala 3 source")
-    val sproofRepl    = taskKey[Unit]("Start the sproof interactive REPL")
+    val sproofCheck   = taskKey[Unit]("Type-check all .sproof files in sproofSources")
+    val sproofExtract = taskKey[Seq[File]]("Extract .sproof files to Scala 3 source (wired into compile)")
+    val sproofRepl    = inputKey[Unit]("Start the sproof interactive REPL")
 
     // Settings
-    val sproofSources  = settingKey[Seq[File]]("Source directories for .sproof files")
-    val sproofOutput   = settingKey[File]("Output directory for extracted Scala files")
-    val sproofVersion  = settingKey[String]("Version of sproof to use")
+    val sproofSources  = settingKey[Seq[File]]("Directories containing .sproof source files")
+    val sproofOutput   = settingKey[File]("Output directory for extracted Scala sources")
+    val sproofVersion  = settingKey[String]("Version of the sproof CLI to use")
+    val sproofJar      = settingKey[Option[File]]("Path to the sproof CLI uber-JAR (None = use `sproof` on PATH)")
+    val sproofJvmOpts  = settingKey[Seq[String]]("JVM options when forking the sproof CLI")
   }
 
   import autoImport._
 
-  override lazy val projectSettings: Seq[Setting[_]] = Seq(
+  // ---- Helpers ----
+
+  /** Build the command prefix: `java [opts] -jar <jar>` or `["sproof"]`. */
+  private def sproofCmd(jar: Option[File], jvmOpts: Seq[String]): Seq[String] =
+    jar match {
+      case Some(j) => Seq("java") ++ jvmOpts ++ Seq("-jar", j.getAbsolutePath)
+      case None    => Seq("sproof")
+    }
+
+  /** Run a sproof CLI command, streaming output to the sbt logger. Returns exit code. */
+  private def runSproof(
+      args:    Seq[String],
+      jar:     Option[File],
+      jvmOpts: Seq[String],
+      log:     Logger,
+  ): Int = {
+    val cmd = sproofCmd(jar, jvmOpts) ++ args
+    log.debug(s"sproof: executing: ${cmd.mkString(" ")}")
+    val logger = ProcessLogger(
+      out => log.info(s"  $out"),
+      err => log.warn(s"  $err"),
+    )
+    Process(cmd).!(logger)
+  }
+
+  // ---- Default settings ----
+
+  override lazy val projectSettings: Seq[Setting[?]] = Seq(
     sproofVersion := "0.1.0",
     sproofSources := Seq(sourceDirectory.value / "main" / "sproof"),
     sproofOutput  := (Compile / sourceManaged).value / "sproof",
+    sproofJar     := None,
+    sproofJvmOpts := Seq("-Xss8m"),
 
-    // Find all .sproof files and type-check them
+    // ---- sproofCheck ----
     sproofCheck := {
-      val log = streams.value.log
-      val srcDirs = sproofSources.value
-      val sproofFiles = srcDirs.flatMap { dir =>
+      val log      = streams.value.log
+      val jar      = sproofJar.value
+      val jvmOpts  = sproofJvmOpts.value
+      val files    = sproofSources.value.flatMap { dir =>
         if (dir.exists) (dir ** "*.sproof").get else Seq.empty
       }
-      if (sproofFiles.isEmpty) {
-        log.info("sproof: No .sproof files found")
+
+      if (files.isEmpty) {
+        log.info("sproof: No .sproof files found.")
       } else {
-        log.info(s"sproof: Checking ${sproofFiles.length} file(s)...")
-        sproofFiles.foreach { f =>
-          log.info(s"  Checking: ${f.getName}")
-          // In a full implementation, this would call the sproof CLI:
-          //   sproof check <file>
+        log.info(s"sproof: Checking ${files.length} file(s)...")
+        val failed = files.filterNot { f =>
+          val code = runSproof(Seq("check", f.getAbsolutePath), jar, jvmOpts, log)
+          code == 0
         }
-        log.success("sproof: All files type-checked successfully")
+        if (failed.nonEmpty) {
+          sys.error(s"sproof: ${failed.length} file(s) failed type-checking:\n" +
+            failed.map("  " + _.getAbsolutePath).mkString("\n"))
+        } else {
+          log.success(s"sproof: All ${files.length} file(s) passed.")
+        }
       }
     },
 
-    // Extract .sproof files to Scala 3 sources
+    // ---- sproofExtract ----
     sproofExtract := {
-      val log = streams.value.log
-      val srcDirs = sproofSources.value
-      val outDir = sproofOutput.value
-      val sproofFiles = srcDirs.flatMap { dir =>
+      val log      = streams.value.log
+      val jar      = sproofJar.value
+      val jvmOpts  = sproofJvmOpts.value
+      val outDir   = sproofOutput.value
+      val files    = sproofSources.value.flatMap { dir =>
         if (dir.exists) (dir ** "*.sproof").get else Seq.empty
       }
 
       IO.createDirectory(outDir)
 
-      val generated = sproofFiles.map { src =>
+      val generated: Seq[File] = files.map { src =>
         val outFile = outDir / src.getName.replace(".sproof", ".scala")
-        log.info(s"sproof: Extracting ${src.getName} -> ${outFile.getName}")
-        // In a full implementation, call the sproof extractor:
-        //   sproof extract <src> --output <outFile>
-        // For now, generate a placeholder that compiles cleanly
-        IO.write(outFile,
-          s"// Generated from ${src.getName} by sbt-sproof\n" +
-          s"// Run `sproof extract ${src.getName}` for full extraction\n"
-        )
+        // Only re-extract if source is newer than the generated file.
+        if (!outFile.exists || src.lastModified > outFile.lastModified) {
+          log.info(s"sproof: Extracting ${src.getName} → ${outFile.getName}")
+          val code = runSproof(
+            Seq("extract", src.getAbsolutePath, "--output", outFile.getAbsolutePath),
+            jar,
+            jvmOpts,
+            log,
+          )
+          if (code != 0)
+            sys.error(s"sproof: Extraction failed for ${src.getAbsolutePath}")
+        } else {
+          log.debug(s"sproof: ${src.getName} is up to date, skipping extraction.")
+        }
         outFile
       }
 
       generated
     },
 
-    // Start the sproof interactive REPL
-    sproofRepl := {
-      val log = streams.value.log
-      log.info("Starting sproof REPL...")
-      log.info("(To run the REPL, use: sbt run with the cli module)")
-      // In a full implementation, fork a new JVM with the sproof CLI:
-      //   val cp = (Compile / fullClasspath).value.files
-      //   Fork.run(ForkOptions(), cp, "sproof.Main", Seq("repl"))
-    },
-
-    // Hook sproofExtract into the compile cycle
+    // Hook sproofExtract into the compile cycle so `sbt compile` runs it automatically.
     Compile / sourceGenerators += sproofExtract.taskValue,
+
+    // ---- sproofRepl ----
+    sproofRepl := {
+      val log     = streams.value.log
+      val jar     = sproofJar.value
+      val jvmOpts = sproofJvmOpts.value
+      log.info("Starting sproof REPL (press Ctrl-D or type :quit to exit)...")
+      val cmd = sproofCmd(jar, jvmOpts) ++ Seq("repl")
+      log.debug(s"sproof: executing: ${cmd.mkString(" ")}")
+      Process(cmd).!
+      ()
+    },
   )
 }

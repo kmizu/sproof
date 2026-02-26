@@ -3,7 +3,7 @@ package sproof
 import scala.util.boundary
 import scala.util.boundary.break
 import sproof.core.{Term, Context, GlobalEnv, Subst}
-import sproof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep}
+import sproof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep, SExpr}
 import sproof.tactic.{TacticM, Builtins, TacticError}
 import sproof.kernel.Kernel
 
@@ -102,8 +102,22 @@ object Checker:
     case STactic.SHave(name, stpe, proof, cont) =>
       haveTactic(name, stpe, proof, cont)
 
+    case STactic.SRfl =>
+      Builtins.trivial
+
+    case STactic.SRw(lemmas) =>
+      Builtins.rewrite(lemmas)
+
     case STactic.SRewrite(lemmas) =>
       Builtins.rewrite(lemmas)
+
+    case STactic.SExact(sexpr) =>
+      exactTactic(sexpr)
+
+    case STactic.SSeq(tactics) =>
+      tactics.foldLeft(TacticM.pure(())) { (acc, t) =>
+        acc.flatMap(_ => tacticFromSurface(t))
+      }
 
     case STactic.SCalc(steps) =>
       calcTactic(steps)
@@ -176,6 +190,19 @@ object Checker:
       _          <- TacticM.solveGoalWith(mv, sproof.core.Term.Let(name, tpeTerm, proofTerm, sproof.core.Term.Meta(mv_cont.id)))
       // Run the continuation tactic
       _          <- tacticFromSurface(cont)
+    yield ()
+
+  /** exact e — provide the exact proof term, checked against the current goal. */
+  private def exactTactic(sexpr: SExpr)(using env: GlobalEnv): TacticM[Unit] =
+    import sproof.syntax.Elaborator
+    for
+      goalPair   <- TacticM.currentGoal
+      (mv, goal)  = goalPair
+      nameEnv     = goal.ctx.entries.map(_.name).toList
+      proofTerm  <- Elaborator.elabExprPublic(sexpr, env, nameEnv) match
+        case Right(t) => TacticM.pure(t)
+        case Left(e)  => TacticM.fail(TacticError.Custom(s"exact: elaboration failed: ${e.message}"))
+      _          <- TacticM.solveGoalWith(mv, proofTerm)
     yield ()
 
   /** calc { step1 step2 ... } — chain equality proofs by transitivity */

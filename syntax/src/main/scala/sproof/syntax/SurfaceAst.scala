@@ -12,6 +12,10 @@ enum SDecl:
   /** Typed binary operator (type annotations mandatory):
    *  operator (x: T1) + (y: T2): T3 = body */
   case SOperator(lhsParam: SParam, opSymbol: String, rhsParam: SParam, retTpe: SType, body: SExpr)
+  /** #check expr — interactively check/print the type of an expression */
+  case SCheck(expr: SExpr)
+  /** @[attr] decl — attribute annotation on a declaration (e.g. @[simp]) */
+  case SAttr(attr: String, decl: SDecl)
 
 /** Surface parameter (name: type). */
 case class SParam(name: String, tpe: SType)
@@ -41,6 +45,8 @@ enum SExpr:
   case SEList(elems: List[SExpr])
   /** Integer literal: 0, 1, 2, -1, -2 — desugars to Nat/Int constructors */
   case SEInt(n: Int)
+  /** let x := value; body — local binding (desugars to Term.Let) */
+  case SELet(name: String, value: SExpr, body: SExpr)
 
 /** Match case in surface syntax. */
 case class SMatchCase(ctor: String, bindings: List[String], body: SExpr)
@@ -54,8 +60,12 @@ enum SProof:
 enum STactic:
   case STrivial
   case STriv
+  /** rfl — alias for trivial (reflexivity, familiar from Lean/Coq) */
+  case SRfl
   case SAssume(names: List[String])
   case SApply(expr: SExpr)
+  /** exact e — provide the exact proof term (checked against goal type) */
+  case SExact(expr: SExpr)
   case SSimplify(lemmas: List[String])
   case SSimp(lemmas: List[String])
   case SInduction(varName: String, cases: List[STacticCase])
@@ -64,8 +74,12 @@ enum STactic:
   case SHave(name: String, tpe: SType, proof: SProof, cont: STactic)
   /** rewrite [lemma1, lemma2] or rewrite lemma */
   case SRewrite(lemmas: List[String])
+  /** rw [...] — alias for rewrite (shorter Lean-style name) */
+  case SRw(lemmas: List[String])
   /** calc { step1 step2 ... } */
   case SCalc(steps: List[SCalcStep])
+  /** sequence of tactics: t1; t2; t3 (run in order, passing proof state) */
+  case SSeq(tactics: List[STactic])
 
 /** A step in a calc block: lhs = rhs { proof }. lhs=None means _ (carry forward). */
 case class SCalcStep(lhs: Option[SExpr], rhs: SExpr, proof: SProof)

@@ -764,3 +764,99 @@ class ParserSuite extends FunSuite:
     val result = Parser.parseExpr("`plus`(x, y)")
     assertEquals(result, Right(SExpr.SEApp(SExpr.SEVar("plus"), List(SExpr.SEVar("x"), SExpr.SEVar("y")))))
   }
+
+  // ===== Lean-inspired features =====
+
+  // -- rfl / intro / intros / rw / exact tactic aliases --
+
+  test("tactic: rfl parses as SRfl") {
+    assertEquals(Parser.parseTactic("rfl"), Right(STactic.SRfl))
+  }
+
+  test("tactic: intro x parses as SAssume") {
+    assertEquals(Parser.parseTactic("intro x"), Right(STactic.SAssume(List("x"))))
+  }
+
+  test("tactic: intros x y parses as SAssume") {
+    assertEquals(Parser.parseTactic("intros x y"), Right(STactic.SAssume(List("x", "y"))))
+  }
+
+  test("tactic: rw [h] parses as SRw") {
+    assertEquals(Parser.parseTactic("rw [h]"), Right(STactic.SRw(List("h"))))
+  }
+
+  test("tactic: rw [h1, h2] parses as SRw with multiple lemmas") {
+    assertEquals(Parser.parseTactic("rw [h1, h2]"), Right(STactic.SRw(List("h1", "h2"))))
+  }
+
+  test("tactic: exact x parses as SExact") {
+    assertEquals(Parser.parseTactic("exact x"), Right(STactic.SExact(SExpr.SEVar("x"))))
+  }
+
+  test("tactic: exact Nat.zero parses as SExact with Con") {
+    assertEquals(Parser.parseTactic("exact Nat.zero"), Right(STactic.SExact(SExpr.SECon("Nat", "zero", Nil))))
+  }
+
+  // -- theorem keyword --
+
+  test("theorem keyword parses as SDefspec") {
+    val result = Parser.parseDecl("theorem plus_zero(n: Nat): n = n { by rfl }")
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDefspec(name, _, _, _) = result.toOption.get: @unchecked
+    assertEquals(name, "plus_zero")
+  }
+
+  // -- let expression --
+
+  test("let x := e; body parses as SELet") {
+    val result = Parser.parseExpr("let x := n; x")
+    assertEquals(result, Right(SExpr.SELet("x", SExpr.SEVar("n"), SExpr.SEVar("x"))))
+  }
+
+  test("let with application body") {
+    val result = Parser.parseExpr("let k := plus(n, m); k")
+    assertEquals(result, Right(
+      SExpr.SELet("k",
+        SExpr.SEApp(SExpr.SEVar("plus"), List(SExpr.SEVar("n"), SExpr.SEVar("m"))),
+        SExpr.SEVar("k"))
+    ))
+  }
+
+  // -- @[simp] attribute --
+
+  test("@[simp] def parses as SAttr") {
+    val result = Parser.parseDecl("@[simp] def id(n: Nat): Nat = n")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SDecl.SAttr("simp", SDecl.SDef("id", _, _, _)) => ()
+      case other => fail(s"Expected SAttr(simp, SDef(id,...)), got $other")
+  }
+
+  // -- #check command --
+
+  test("#check expr parses as SCheck") {
+    val result = Parser.parseDecl("#check n")
+    assert(result.isRight, s"Parse failed: $result")
+    result.toOption.get match
+      case SDecl.SCheck(SExpr.SEVar("n")) => ()
+      case other => fail(s"Expected SCheck(SEVar(n)), got $other")
+  }
+
+  // -- forall type syntax --
+
+  test("forall (x: Nat), Nat parses as STPi") {
+    val result = Parser.parseType("Pi(x: Nat, Nat)")
+    assertEquals(result, Right(SType.STPi("x", SType.STVar("Nat"), SType.STVar("Nat"))))
+  }
+
+  // -- tactic sequence --
+
+  test("{ trivial; sorry } parses as SSeq") {
+    val result = Parser.parseTactic("{ trivial; sorry }")
+    assertEquals(result, Right(STactic.SSeq(List(STactic.STrivial, STactic.SSorry))))
+  }
+
+  test("{ trivial } single-element sequence unwraps to tactic") {
+    val result = Parser.parseTactic("{ trivial }")
+    assertEquals(result, Right(STactic.STrivial))
+  }

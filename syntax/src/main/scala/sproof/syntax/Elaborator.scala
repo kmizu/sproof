@@ -115,6 +115,32 @@ object Elaborator:
                   env = env.addDef(entry).addOperator(opSymbol, defName)
             case _ => ()
 
+        case SDecl.SAttr(attr, inner) =>
+          // Process the inner decl normally, then if attr == "simp", mark it in env
+          val namesBefore = defs.keySet
+          // Recurse: elaborate the inner decl
+          inner match
+            case SDecl.SDef(name, params, retTpe, body) =>
+              if defs.contains(name) then
+                return Left(ElabError(s"Duplicate definition: $name"))
+              elabDef(name, params, retTpe, body, env) match
+                case Left(err)   => return Left(err)
+                case Right(term) =>
+                  defs = defs + (name -> term)
+                  val fullTpe = term match
+                    case Term.Fix(_, tpe, _) => tpe
+                    case _                   => elabType(retTpe, env, Nil).getOrElse(Term.Meta(-1))
+                  var entry = DefEntry(name, fullTpe, term)
+                  env = env.addDef(entry)
+                  if attr == "simp" then env = env.addToSimpSet(name)
+            case _ =>
+              // For non-def declarations, just process inner (attrs ignored)
+              ()
+
+        case SDecl.SCheck(_) =>
+          // #check is processed by the CLI, not elaborator; skip here
+          ()
+
     Right(ElabResult(env, defs, defspecs))
 
   /** Public API: elaborate a surface type given a GlobalEnv and a Context.
@@ -379,6 +405,16 @@ object Elaborator:
 
       case SExpr.SEInt(n) =>
         elabIntLiteral(n, env)
+
+      case SExpr.SELet(name, value, body) =>
+        // let x := value; body  =>  Term.Let(x, inferredType, valueTerm, bodyTerm)
+        // We elaborate value first to get the core term, then extend nameEnv for body.
+        for
+          valueTerm <- elabExpr(value, env, nameEnv, selfName, typeAnns)
+          // Extend the name environment: name is now at index 0
+          newEnv     = name :: nameEnv
+          bodyTerm  <- elabExpr(body, env, newEnv, selfName, typeAnns)
+        yield Term.Let(name, Term.Meta(-1), valueTerm, bodyTerm)
 
   // ---- Structure / Instance / Operator helpers ----
 

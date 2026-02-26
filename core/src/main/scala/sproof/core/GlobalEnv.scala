@@ -57,19 +57,22 @@ case class GlobalEnv(
   /** Maps operator symbol (e.g. "+") to the def name that implements it.
    *  No overloading: each symbol has exactly one registered implementation. */
   operators:  Map[String, String]    = Map.empty,
+  /** Set of def names marked @[simp] — used by the simplify tactic as default lemmas. */
+  simpSet:    Set[String]            = Set.empty,
 ):
   def lookupInd(name: String):     Option[IndDef]    = inductives.get(name)
   def lookupDef(name: String):     Option[DefEntry]  = defs.get(name)
   def lookupStruct(name: String):  Option[StructDef] = structures.get(name)
   def lookupOperator(op: String):  Option[String]    = operators.get(op)
 
-  def addInd(d: IndDef):                  GlobalEnv = copy(inductives = inductives + (d.name -> d))
-  def addDef(d: DefEntry):                GlobalEnv = copy(defs       = defs       + (d.name -> d))
-  def addStruct(s: StructDef):            GlobalEnv = copy(structures = structures + (s.name -> s))
+  def addInd(d: IndDef):                    GlobalEnv = copy(inductives = inductives + (d.name -> d))
+  def addDef(d: DefEntry):                  GlobalEnv = copy(defs       = defs       + (d.name -> d))
+  def addStruct(s: StructDef):              GlobalEnv = copy(structures = structures + (s.name -> s))
   def addOperator(sym: String, fn: String): GlobalEnv = copy(operators = operators + (sym -> fn))
+  def addToSimpSet(name: String):           GlobalEnv = copy(simpSet   = simpSet + name)
 
 object GlobalEnv:
-  val empty: GlobalEnv = GlobalEnv(Map.empty, Map.empty, Map.empty, Map.empty)
+  val empty: GlobalEnv = GlobalEnv(Map.empty, Map.empty, Map.empty, Map.empty, Set.empty)
 
   /** Default implicit: empty environment.
    *  Lower priority than locally-defined givens; existing code needing no inductives

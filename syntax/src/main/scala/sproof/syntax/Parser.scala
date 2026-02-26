@@ -8,7 +8,7 @@ import parsley.token.descriptions.*
 import parsley.token.Basic
 import parsley.expr.chain
 import parsley.syntax.zipped.*
-import parsley.character.{digit, char, stringOfMany}
+import parsley.character.{digit, char, stringOfMany, stringOfSome}
 
 /** Parser for the sproof surface syntax, built with Parsley 5.0.0-M9.
   *
@@ -32,13 +32,14 @@ object Parser:
     ),
     symbolDesc = SymbolDesc.plain.copy(
       hardKeywords = Set(
-        "inductive", "def", "defspec", "case", "match", "by",
-        "trivial", "triv", "assume", "apply", "simplify", "simp",
+        "inductive", "def", "defspec", "theorem", "case", "match", "by",
+        "trivial", "triv", "rfl", "assume", "intro", "intros",
+        "apply", "exact", "simplify", "simp",
         "induction", "sorry", "fun", "Pi", "Type",
         "structure", "instance", "operator",
-        "have", "rewrite", "calc",
+        "have", "rewrite", "rw", "calc", "let", "in",
       ),
-      hardOperators = Set("->", "=", "=>", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-"),
+      hardOperators = Set("->", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@"),
     ),
   ))
 
@@ -89,10 +90,34 @@ object Parser:
 
   private lazy val atomicType: Parsley[SType] = choice(
     piType,
+    forallType,
     uniType,
     typeVarOrApp,
     parens(fwd(typeExpr)),
   )
+
+  /** ∀ (x : A), B — Unicode forall as Pi type
+   *  Also handles `∀ x : A, B` without parens.
+   */
+  private lazy val forallType: Parsley[SType] =
+    atomic(parsley.character.char('∀') <* ws) *> choice(
+      // ∀ (x : A), B
+      parens(identifier.flatMap { name =>
+        op(":") *> fwd(typeExpr).map { dom => (name, dom) }
+      }).flatMap { case (name, dom) =>
+        op(",") *> fwd(typeExpr).map { cod =>
+          SType.STPi(name, dom, cod)
+        }
+      },
+      // ∀ x : A, B
+      identifier.flatMap { name =>
+        op(":") *> fwd(typeExpr).flatMap { dom =>
+          op(",") *> fwd(typeExpr).map { cod =>
+            SType.STPi(name, dom, cod)
+          }
+        }
+      },
+    )
 
   /** Pi(x: A, B) */
   private lazy val piType: Parsley[SType] =
@@ -145,9 +170,20 @@ object Parser:
   private lazy val expr: Parsley[SExpr] = choice(
     matchExpr,
     lamExpr,
+    letExpr,
     listLiteral,
     addExpr,
   )
+
+  /** let x := value; body  — local let binding */
+  private lazy val letExpr: Parsley[SExpr] =
+    keyword("let") *> anyIdentifier.flatMap { name =>
+      op(":=") *> fwd(expr).flatMap { value =>
+        op(";") *> fwd(expr).map { body =>
+          SExpr.SELet(name, value, body)
+        }
+      }
+    }
 
   /** List literal: [] or [e1, e2, e3] */
   private lazy val listLiteral: Parsley[SExpr] =
@@ -277,13 +313,47 @@ object Parser:
   // ---- Declaration parsing ----
 
   private lazy val decl: Parsley[SDecl] = choice(
+    attrDecl,
+    checkDecl,
     inductiveDecl,
+    theoremDecl,
     defspecDecl,
     defDecl,
     structureDecl,
     instanceDecl,
     operatorDecl,
   )
+
+  /** Raw identifier: letters/digits/underscore, NOT keyword-filtered.
+   *  Used for attribute names like @[simp] where "simp" is a keyword. */
+  private lazy val rawIdentifier: Parsley[String] =
+    atomic(stringOfSome(c => c.isLetterOrDigit || c == '_')) <* ws
+
+  /** @[attr] decl */
+  private lazy val attrDecl: Parsley[SDecl] =
+    op("@") *> brackets(rawIdentifier).flatMap { attr =>
+      fwd(decl).map { inner =>
+        SDecl.SAttr(attr, inner)
+      }
+    }
+
+  /** #check expr */
+  private lazy val checkDecl: Parsley[SDecl] =
+    atomic(op("#") *> keyword("check") *> fwd(expr)).map(SDecl.SCheck.apply)
+
+  /** theorem — alias for defspec */
+  private lazy val theoremDecl: Parsley[SDecl] =
+    keyword("theorem") *> anyIdentifier.flatMap { name =>
+      option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
+        paramList.flatMap { params =>
+          (op(":") *> propType).flatMap { prop =>
+            braces(proof).map { prf =>
+              SDecl.SDefspec(name, tparams ++ params, prop, prf)
+            }
+          }
+        }
+      }
+    }
 
   /** inductive Name(params) { case ctor1: T case ctor2(a: A): T } */
   private lazy val inductiveDecl: Parsley[SDecl] =
@@ -375,17 +445,30 @@ object Parser:
   private lazy val tactic: Parsley[STactic] = choice(
     keyword("trivial") #> STactic.STrivial,
     keyword("triv") #> STactic.STriv,
+    keyword("rfl") #> STactic.SRfl,
     keyword("sorry") #> STactic.SSorry,
     keyword("assume") *> some(identifier).map(STactic.SAssume.apply),
+    keyword("intro") *> some(identifier).map(STactic.SAssume.apply),
+    keyword("intros") *> some(identifier).map(STactic.SAssume.apply),
     keyword("apply") *> fwd(expr).map(STactic.SApply.apply),
+    keyword("exact") *> fwd(expr).map(STactic.SExact.apply),
     keyword("simplify") *> brackets(sepBy(identifier, op(","))).map(STactic.SSimplify.apply),
     atomic(keyword("simp") *> brackets(sepBy(identifier, op(",")))).map(STactic.SSimp.apply),
     keyword("simp") #> STactic.SSimp(Nil),
     haveTactic,
+    atomic(keyword("rw") *> brackets(sepBy1(identifier, op(",")))).map(STactic.SRw.apply),
     rewriteTactic,
     calcTactic,
+    seqTactic,
     inductionTactic,
   )
+
+  /** { t1; t2; t3 } — tactic sequence */
+  private lazy val seqTactic: Parsley[STactic] =
+    braces(sepBy1(fwd(tactic), op(";"))).map { tactics =>
+      if tactics.length == 1 then tactics.head
+      else STactic.SSeq(tactics)
+    }
 
   /** have h : T = { proof } ; cont_tactic */
   private lazy val haveTactic: Parsley[STactic] =
@@ -502,11 +585,12 @@ object Parser:
   )
 
   private val keywords = Set(
-    "inductive", "def", "defspec", "case", "match", "by",
-    "trivial", "triv", "assume", "apply", "simplify", "simp",
+    "inductive", "def", "defspec", "theorem", "case", "match", "by",
+    "trivial", "triv", "rfl", "assume", "intro", "intros",
+    "apply", "exact", "simplify", "simp",
     "induction", "sorry", "fun", "Pi", "Type",
     "structure", "instance", "operator",
-    "have", "rewrite", "calc",
+    "have", "rewrite", "rw", "calc", "let", "in",
   )
 
   private def isKeyword(s: String): Boolean = keywords.contains(s)

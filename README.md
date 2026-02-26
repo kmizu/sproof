@@ -36,7 +36,7 @@ def plus(n: Nat, m: Nat): Nat {
   }
 }
 
-defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = {
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
   by induction n {
     case zero      => trivial
     case succ k ih => simplify [ih]
@@ -130,14 +130,14 @@ def id(x: Nat): Nat = x
 **proposition = type**, **proof = program**.
 
 ```
-defspec name(params): proposition program = { proof }
+defspec name(params): proposition { proof }
 ```
 
 Symmetry with `def`:
 
 ```scala
 def     foo(n: Nat): Nat  =         { n }          // function: program for a type
-defspec bar(n: Nat): P(n) program = { ... }        // spec: proof program for a proposition
+defspec bar(n: Nat): P(n) { ... }        // spec: proof program for a proposition
 ```
 
 If the proof program has the wrong type, it is rejected — just like a type error in regular code.
@@ -146,12 +146,12 @@ If the proof program has the wrong type, it is rejected — just like a type err
 
 ```scala
 // Trivial: both sides reduce to the same term
-defspec plus_zero_left(m: Nat): plus(Nat.zero, m) = m program = {
+defspec plus_zero_left(m: Nat): plus(Nat.zero, m) = m {
   by trivial
 }
 
 // Induction with induction hypothesis
-defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = {
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
   by induction n {
     case zero      => trivial
     case succ k ih => simplify [ih]
@@ -162,7 +162,7 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = {
 ### Term Proofs (direct Curry-Howard terms)
 
 ```scala
-defspec refl_intro(n: Nat): n = n program = {
+defspec refl_intro(n: Nat): n = n {
   by induction n {
     case zero   => trivial
     case succ k => trivial
@@ -197,8 +197,8 @@ defspec refl_intro(n: Nat): n = n program = {
 |----------------------|-------------------------|------------------------------------|
 | Inductive type       | `Inductive Nat : Set :=` | `inductive Nat {`                 |
 | Function definition  | `Fixpoint plus ...`      | `def plus ...`                    |
-| Theorem              | `Theorem plus_zero ...`  | `defspec plus_zero ... program = {`|
-| Begin proof          | `Proof.`                 | `program = {`                     |
+| Theorem              | `Theorem plus_zero ...`  | `defspec plus_zero ... {`|
+| Begin proof          | `Proof.`                 | `{`                               |
 | End proof            | `Qed.`                   | `}`                               |
 | Reflexivity          | `reflexivity` / `rfl`    | `trivial`                         |
 | Simplify             | `simpl` / `simp`         | `simplify` / `simp`               |
@@ -218,7 +218,7 @@ Proofs (propositions) are erased at runtime; only the computational content rema
 ```scala
 // sproof
 def plus(n: Nat, m: Nat): Nat { ... }
-defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n program = { ... }
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n { ... }
 
 // Generated Scala 3
 def plus(n: Nat, m: Nat): Nat = ...

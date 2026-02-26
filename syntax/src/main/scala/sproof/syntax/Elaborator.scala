@@ -9,7 +9,8 @@ case class ElabError(message: String)
 case class ElabResult(
   env:      GlobalEnv,
   defs:     Map[String, Term],
-  defspecs: Map[String, (Term, SProof)],
+  /** (params: List[(name, type)], propTerm, proof) — params needed to build the proof context */
+  defspecs: Map[String, (List[(String, Term)], Term, SProof)],
 )
 
 /** Elaborator: converts surface AST to core terms with De Bruijn indices.
@@ -27,7 +28,7 @@ object Elaborator:
   def elaborate(decls: List[SDecl]): Either[ElabError, ElabResult] =
     var env      = GlobalEnv.empty
     var defs     = Map.empty[String, Term]
-    var defspecs = Map.empty[String, (Term, SProof)]
+    var defspecs = Map.empty[String, (List[(String, Term)], Term, SProof)]
 
     for decl <- decls do
       decl match
@@ -54,9 +55,19 @@ object Elaborator:
           if defspecs.contains(name) then
             return Left(ElabError(s"Duplicate defspec: $name"))
           val nameEnv = params.reverse.map(_.name)
-          elabType(prop, env, nameEnv) match
-            case Left(err)    => return Left(err)
-            case Right(propT) => defspecs = defspecs + (name -> (propT, proof))
+          // Elaborate param types (non-dependent: each type is in the outer env)
+          val elabParamTypes: Either[ElabError, List[(String, Term)]] =
+            params.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) {
+              (acc, p) => acc.flatMap { lst =>
+                elabType(p.tpe, env, Nil).map(tpe => lst :+ (p.name, tpe))
+              }
+            }
+          elabParamTypes match
+            case Left(err) => return Left(err)
+            case Right(elabParams) =>
+              elabType(prop, env, nameEnv) match
+                case Left(err)    => return Left(err)
+                case Right(propT) => defspecs = defspecs + (name -> (elabParams, propT, proof))
 
     Right(ElabResult(env, defs, defspecs))
 
@@ -132,12 +143,13 @@ object Elaborator:
         Right(Term.Uni(level))
 
       case SType.STEq(lhs, rhs) =>
-        // Equality proposition: elaborate both sides as expressions
-        // The actual Eq type will be resolved by the checker/tactic layer
+        // Equality proposition: elaborate both sides as expressions.
+        // Use 2-arg form: App(App(Ind("Eq",...), lhs), rhs) — type arg is inferred later.
+        // We use Ind("Eq",...) as the head; the bidirectional checker has a special case for refl.
         for
           lhsT <- elabExpr(lhs, env, nameEnv, "")
           rhsT <- elabExpr(rhs, env, nameEnv, "")
-        yield Term.App(Term.App(Term.Var(-1), lhsT), rhsT) // placeholder for Eq type
+        yield Term.App(Term.App(Term.Ind("Eq", Nil, Nil), lhsT), rhsT)
 
   // ---- Expression elaboration ----
 

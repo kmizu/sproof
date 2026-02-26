@@ -67,7 +67,7 @@ object IndChecker:
                     TypeError.Custom(s"Unknown inductive type '$indName'")
                   )
       _        <- checkCoverage(cases, indDef)
-      _        <- checkCases(ctx, cases, indDef, returnTpe)
+      _        <- checkCases(ctx, scrutinee, cases, indDef, returnTpe)
     yield returnTpe
 
   // ---- private helpers ----
@@ -108,9 +108,13 @@ object IndChecker:
         s"Non-exhaustive match for '${indDef.name}': ${msgs.mkString("; ")}"
       ))
 
-  /** Check the body of each match case against `returnTpe`. */
+  /** Check the body of each match case against `returnTpe`.
+   *
+   *  @param scrutinee the original scrutinee term (used to specialize returnTpe)
+   */
   private def checkCases(
     ctx:       Context,
+    scrutinee: Term,
     cases:     List[MatchCase],
     indDef:    IndDef,
     returnTpe: Term,
@@ -127,13 +131,59 @@ object IndChecker:
                 s"but constructor has ${ctorDef.argTpes.length} argument(s)"
               ))
             else
+              val n = ctorDef.argTpes.length
               // Extend context with constructor argument bindings.
               // foldLeft prepends each arg type; last arg in argTpes → Var(0).
               val extCtx = ctorDef.argTpes.foldLeft(ctx) { (c, argTpe) =>
                 c.extend("_", argTpe)
               }
-              // Shift returnTpe so free variables remain valid in the extended context.
-              val shiftedRetTpe = Subst.shift(mc.bindings, returnTpe)
-              Bidirectional.check(extCtx, mc.body, shiftedRetTpe)
+              // Build the constructor application term in the extended context.
+              // Ctor args are Var(n-1)..Var(0) (most recent = Var(0)).
+              val ctorApp = Term.Con(ctorDef.name, indDef.name,
+                (0 until n).toList.map(i => Term.Var(n - 1 - i)))
+              // Specialize returnTpe for this constructor:
+              //   replace Var(scrutineeIdx) with ctorApp, shift all other free vars by n.
+              // If scrutinee is not a Var, fall back to plain shift (conservative).
+              val specializedRetTpe = scrutinee match
+                case Term.Var(k) => specializeForCase(returnTpe, k, ctorApp, n)
+                case _           => Subst.shift(n, returnTpe)
+              Bidirectional.check(extCtx, mc.body, specializedRetTpe)
       }
     }
+
+  /** Specialize `returnTpe` for a match case branch.
+   *
+   *  Replaces `Var(varIdx)` (the scrutinee) with `ctorApp` (the constructor
+   *  application in the extended context) and shifts all other free variables by `n`
+   *  (to account for the `n` new constructor-arg bindings).
+   *
+   *  Unlike `specializeGoal` in Builtins, this does NOT remove the old binding;
+   *  it only shifts other free variables up by `n`.
+   */
+  private def specializeForCase(t: Term, varIdx: Int, ctorApp: Term, n: Int): Term =
+    import sproof.core.{Param, Ctor}
+    def go(depth: Int, t: Term): Term = t match
+      case Term.Var(i) =>
+        val absI = i - depth
+        if absI < 0 then Term.Var(i)                           // bound inside depth binders
+        else if absI == varIdx then Subst.shift(depth, ctorApp) // replace scrutinee
+        else Term.Var(i + n)                                    // other free vars: shift +n
+      case Term.App(f, a)          => Term.App(go(depth, f), go(depth, a))
+      case Term.Lam(x, tp, b)     => Term.Lam(x, go(depth, tp), go(depth + 1, b))
+      case Term.Pi(x, d, c)       => Term.Pi(x, go(depth, d), go(depth + 1, c))
+      case Term.Let(x, tp, df, b) => Term.Let(x, go(depth, tp), go(depth, df), go(depth + 1, b))
+      case Term.Uni(_)             => t
+      case Term.Meta(_)            => t
+      case Term.Ind(nm, ps, cs)   =>
+        Term.Ind(nm,
+          ps.map(p => Param(p.name, go(depth, p.tpe))),
+          cs.map(c => Ctor(c.name, go(depth, c.tpe))))
+      case Term.Con(nm, r, args)  => Term.Con(nm, r, args.map(go(depth, _)))
+      case Term.Fix(nm, tp, b)    => Term.Fix(nm, go(depth, tp), go(depth + 1, b))
+      case Term.Mat(s, cases, rt) =>
+        Term.Mat(
+          go(depth, s),
+          cases.map(mc => mc.copy(body = go(depth + mc.bindings, mc.body))),
+          go(depth, rt),
+        )
+    go(0, t)

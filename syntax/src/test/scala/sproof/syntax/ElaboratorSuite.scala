@@ -119,7 +119,7 @@ class ElaboratorSuite extends FunSuite:
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
     assert(elab.defspecs.contains("refl"), "refl should be in defspecs")
-    val (_, proof) = elab.defspecs("refl")
+    val (_, _, proof) = elab.defspecs("refl")
     val SProof.SBy(STactic.STrivial) = proof: @unchecked
   }
 

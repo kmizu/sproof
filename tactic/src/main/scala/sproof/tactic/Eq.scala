@@ -28,10 +28,18 @@ object Eq:
   def mkRefl(lhs: Term): Term =
     Term.Con("refl", "Eq", List(lhs))
 
-  /** Extract `(tpe, lhs, rhs)` from a term if it has the shape `Eq tpe lhs rhs`. */
+  /** Extract `(tpe, lhs, rhs)` from a term if it has the shape `Eq tpe lhs rhs`.
+   *
+   *  Handles both forms:
+   *  - 3-arg: `App(App(App(Ind("Eq",...), tpe), lhs), rhs)` — explicit type
+   *  - 2-arg: `App(App(Ind("Eq",...), lhs), rhs)` — type omitted (from Elaborator)
+   *    In the 2-arg case, `tpe` is returned as `Meta(-1)` (unknown placeholder).
+   */
   def extract(t: Term): Option[(Term, Term, Term)] = t match
     case Term.App(Term.App(Term.App(Term.Ind("Eq", _, _), tpe), lhs), rhs) =>
       Some((tpe, lhs, rhs))
+    case Term.App(Term.App(Term.Ind("Eq", _, _), lhs), rhs) =>
+      Some((Term.Meta(-1), lhs, rhs))  // 2-arg form: type is unknown
     case _ =>
       None
 

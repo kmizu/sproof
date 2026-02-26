@@ -19,7 +19,13 @@ object Bidirectional:
 
   /** Check that `term` has type `expected` in context `ctx`. */
   def check(ctx: Context, term: Term, expected: Term)(using env: GlobalEnv): Either[TypeError, Unit] =
-    (term, whnf(ctx, expected)) match
+    // When expected is already a syntactic Pi, use it directly to avoid NbE round-trip:
+    // Eval.eval(Ind(...)) → SNeu(NVar(-1), Nil) → quote → Var(wrong), which mangles inductive
+    // type names in Pi domains.  Pi is already a value (whnf), so no reduction is needed.
+    val normExpected = expected match
+      case _: Term.Pi => expected
+      case _          => whnf(ctx, expected)
+    (term, normExpected) match
       // η-expansion: check a lambda against a Pi type
       case (Term.Lam(x, annTp, body), Term.Pi(_, dom, cod)) =>
         for
@@ -93,6 +99,12 @@ object Bidirectional:
         extCtx = ctx.extend(name, tpe)
         _     <- check(extCtx, body, Subst.shift(1, tpe))
       yield tpe
+
+    case Term.Con("refl", "Eq", List(a)) =>
+      // Special case: refl(a) : Eq a a (2-arg form, no explicit type arg).
+      // This matches the 2-arg Eq encoding used by the Elaborator for propositions.
+      // The type arg is omitted; bidirectional equality check uses only lhs/rhs.
+      Right(Term.App(Term.App(Term.Ind("Eq", Nil, Nil), a), a))
 
     case Term.Con(name, indRef, args) =>
       IndChecker.inferCon(ctx, name, indRef, args)

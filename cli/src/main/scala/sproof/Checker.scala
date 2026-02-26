@@ -22,12 +22,23 @@ object Checker:
   def checkAll(result: ElabResult): Either[String, GlobalEnv] =
     given GlobalEnv = result.env
     boundary:
-      for (name, (propTerm, proof)) <- result.defspecs do
-        executeProof(Context.empty, propTerm, proof) match
+      for (name, (elabParams, propTerm, proof)) <- result.defspecs do
+        // Build context from defspec parameters so the proof can reference them
+        val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
+          ctx.extend(p._1, p._2)
+        }
+        executeProof(proofCtx, propTerm, proof) match
           case Left(err) =>
             break(Left(s"Proof of '$name' failed: $err"))
           case Right(proofTerm) =>
-            Kernel.check(Context.empty, proofTerm, propTerm) match
+            // Wrap proof in lambdas + prop in Pi for the kernel check at Context.empty
+            val fullProofTerm = elabParams.foldRight(proofTerm) { (p, body) =>
+              Term.Lam(p._1, p._2, body)
+            }
+            val fullPropTerm = elabParams.foldRight(propTerm) { (p, cod) =>
+              Term.Pi(p._1, p._2, cod)
+            }
+            Kernel.check(Context.empty, fullProofTerm, fullPropTerm) match
               case Left(err) =>
                 break(Left(s"Kernel rejected proof of '$name': ${err.getMessage}"))
               case Right(()) =>

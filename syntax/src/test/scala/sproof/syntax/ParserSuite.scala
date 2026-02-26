@@ -587,3 +587,124 @@ class ParserSuite extends FunSuite:
     val exprResult = Parser.parseExpr("[x, y]")
     assert(exprResult.isRight)
   }
+
+  // ===== have tactic =====
+
+  test("parse tactic have with trivial sub-proof and trivial continuation") {
+    val input = "have h : Nat = { by trivial } ; trivial"
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SHave(name, tpe, proof, cont) = result.toOption.get: @unchecked
+    assertEquals(name, "h")
+    assertEquals(tpe, SType.STVar("Nat"))
+    val SProof.SBy(STactic.STrivial) = proof: @unchecked
+    assertEquals(cont, STactic.STrivial)
+  }
+
+  test("parse tactic have with arrow type") {
+    val input = "have h : Nat -> Nat = { by sorry } ; sorry"
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SHave(name, tpe, _, _) = result.toOption.get: @unchecked
+    assertEquals(name, "h")
+    assertEquals(tpe, SType.STArrow(SType.STVar("Nat"), SType.STVar("Nat")))
+  }
+
+  test("parse tactic have in defspec context") {
+    val input = "defspec test(n: Nat): n = n { by have h : Nat = { by sorry } ; trivial }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+  }
+
+  // ===== rewrite tactic =====
+
+  test("parse tactic rewrite with single lemma") {
+    val input = "rewrite lemma1"
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SRewrite(lemmas) = result.toOption.get: @unchecked
+    assertEquals(lemmas, List("lemma1"))
+  }
+
+  test("parse tactic rewrite with bracketed lemma list") {
+    val input = "rewrite [lemma1, lemma2]"
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SRewrite(lemmas) = result.toOption.get: @unchecked
+    assertEquals(lemmas, List("lemma1", "lemma2"))
+  }
+
+  // ===== calc block =====
+
+  test("parse tactic calc with two steps") {
+    val input =
+      """calc {
+        |  x = y { by trivial }
+        |  _ = z { by trivial }
+        |}""".stripMargin
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SCalc(steps) = result.toOption.get: @unchecked
+    assertEquals(steps.length, 2)
+    assert(steps(0).lhs.isDefined, "first step should have explicit lhs")
+    assert(steps(1).lhs.isEmpty, "second step should have _ lhs")
+  }
+
+  // ===== numeric literals =====
+
+  test("parse numeric literal 0") {
+    val result = Parser.parseExpr("0")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEInt(n) = result.toOption.get: @unchecked
+    assertEquals(n, 0)
+  }
+
+  test("parse numeric literal 42") {
+    val result = Parser.parseExpr("42")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEInt(n) = result.toOption.get: @unchecked
+    assertEquals(n, 42)
+  }
+
+  test("parse negative numeric literal -3") {
+    val result = Parser.parseExpr("-3")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEInt(n) = result.toOption.get: @unchecked
+    assertEquals(n, -3)
+  }
+
+  test("parse numeric literal in function argument position") {
+    val result = Parser.parseExpr("f(0)")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEApp(fn, args) = result.toOption.get: @unchecked
+    assertEquals(fn, SExpr.SEVar("f"))
+    val SExpr.SEInt(0) = args(0): @unchecked
+  }
+
+  test("parse numeric literal in infix expression") {
+    val result = Parser.parseExpr("0 + 1")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SInfix(lhs, op, rhs) = result.toOption.get: @unchecked
+    assertEquals(op, "+")
+    val SExpr.SEInt(0) = lhs: @unchecked
+    val SExpr.SEInt(1) = rhs: @unchecked
+  }
+
+  test("parse rewrite with empty brackets fails") {
+    // rewrite requires at least one lemma
+    val result = Parser.parseTactic("rewrite []")
+    // This should fail because rewrite requires at least one lemma in brackets
+    // Actually, it should try the identifier branch and fail
+    assert(result.isLeft, "rewrite with empty brackets should fail")
+  }
+
+  test("parse calc with single step") {
+    val input =
+      """calc {
+        |  x = y { by sorry }
+        |}""".stripMargin
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SCalc(steps) = result.toOption.get: @unchecked
+    assertEquals(steps.length, 1)
+  }

@@ -117,6 +117,25 @@ object Elaborator:
 
     Right(ElabResult(env, defs, defspecs))
 
+  /** Public API: elaborate a surface type given a GlobalEnv and a Context.
+    * Builds a nameEnv from the context entries.
+    */
+  def elabTypePublic(
+    tpe: SType,
+    env: GlobalEnv,
+    ctx: sproof.core.Context,
+  ): Either[ElabError, Term] =
+    val nameEnv = ctx.entries.map(_.name).toList
+    elabType(tpe, env, nameEnv)
+
+  /** Public API: elaborate a surface expression given a GlobalEnv and a nameEnv. */
+  def elabExprPublic(
+    expr:    SExpr,
+    env:     GlobalEnv,
+    nameEnv: List[String],
+  ): Either[ElabError, Term] =
+    elabExpr(expr, env, nameEnv, "")
+
   // ---- Helpers ----
 
   /** Build type annotations map from param declarations (for struct field access). */
@@ -358,6 +377,9 @@ object Elaborator:
         }
         elabExpr(desugared, env, nameEnv, selfName, typeAnns)
 
+      case SExpr.SEInt(n) =>
+        elabIntLiteral(n, env)
+
   // ---- Structure / Instance / Operator helpers ----
 
   private def elabStructure(
@@ -456,5 +478,37 @@ object Elaborator:
     results.collectFirst { case Left(e) => e } match
       case Some(err) => Left(err)
       case None      => Right(results.map(_.toOption.get))
+
+  // ---- Numeric literal elaboration ----
+
+  /** Elaborate an integer literal to Nat/Int constructors.
+    *
+    * - n >= 0 with only Nat in scope: build nested Nat.succ(..Nat.zero..)
+    * - n == 0 with Int in scope: Int.zero
+    * - n > 0 with Int in scope: Int.pos(natN-1)
+    * - n < 0 with Int in scope: Int.neg(nat|n|-1)
+    * - n >= 0 with Nat in scope (Int also present): Nat encoding
+    */
+  private def elabIntLiteral(n: Int, env: GlobalEnv): Either[ElabError, Term] =
+    val hasNat = env.lookupInd("Nat").isDefined
+    val hasInt = env.lookupInd("Int").isDefined
+
+    def mkNat(k: Int): Term =
+      if k <= 0 then Term.Con("zero", "Nat", Nil)
+      else Term.Con("succ", "Nat", List(mkNat(k - 1)))
+
+    if n < 0 then
+      if hasInt then
+        Right(Term.Con("neg", "Int", List(mkNat(-n - 1))))
+      else
+        Left(ElabError(s"Negative literal $n requires Int type in scope"))
+    else if n == 0 then
+      if hasNat then Right(mkNat(0))
+      else if hasInt then Right(Term.Con("zero", "Int", Nil))
+      else Left(ElabError("Numeric literal 0 requires Nat or Int type in scope"))
+    else // n > 0
+      if hasNat then Right(mkNat(n))
+      else if hasInt then Right(Term.Con("pos", "Int", List(mkNat(n - 1))))
+      else Left(ElabError(s"Numeric literal $n requires Nat or Int type in scope"))
 
 end Elaborator

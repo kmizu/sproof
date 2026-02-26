@@ -497,3 +497,90 @@ class ElaboratorSuite extends FunSuite:
     assert(result.isRight, s"Elaboration failed: $result")
     assert(result.toOption.get.defs.contains("addThree"))
   }
+
+  // ===== Numeric literal elaboration =====
+
+  test("elaborate numeric literal 0 to Nat.zero") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def myZero(): Nat = 0""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val body = result.toOption.get.defs("myZero")
+    // body should be Con("zero", "Nat", Nil)
+    assertEquals(body, Term.Con("zero", "Nat", Nil))
+  }
+
+  test("elaborate numeric literal 1 to Nat.succ(Nat.zero)") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def myOne(): Nat = 1""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val body = result.toOption.get.defs("myOne")
+    assertEquals(body, Term.Con("succ", "Nat", List(Term.Con("zero", "Nat", Nil))))
+  }
+
+  test("elaborate numeric literal 2 to nested succ") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def myTwo(): Nat = 2""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val body = result.toOption.get.defs("myTwo")
+    assertEquals(body, Term.Con("succ", "Nat", List(Term.Con("succ", "Nat", List(Term.Con("zero", "Nat", Nil))))))
+  }
+
+  test("elaborate numeric literal with Int type") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |inductive Int { case zero: Int case pos(n: Nat): Int case neg(n: Nat): Int }
+        |def myNeg(): Int = -1""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val body = result.toOption.get.defs("myNeg")
+    // -1 -> Int.neg(Nat.zero)
+    assertEquals(body, Term.Con("neg", "Int", List(Term.Con("zero", "Nat", Nil))))
+  }
+
+  test("elaborate numeric literal without Nat or Int in scope fails") {
+    val input =
+      """inductive Bool { case true: Bool case false: Bool }
+        |def bad(): Bool = 0""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Numeric literal without Nat/Int should fail")
+  }
+
+  test("elaborate negative numeric literal without Int in scope fails") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def bad(): Nat = -1""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Negative literal without Int should fail")
+  }
+
+  test("elaborate numeric literal in function argument") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def id(x: Nat): Nat = x
+        |def test(): Nat = id(0)""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+  }
+
+  // ===== Parameterized inductive elaboration =====
+
+  test("elaborate parameterized inductive List(A)") {
+    val input =
+      """inductive List(A: Type) {
+        |  case nil: List(A)
+        |  case cons(head: A, tail: List(A)): List(A)
+        |}""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val listDef = result.toOption.get.env.lookupInd("List")
+    assert(listDef.isDefined, "List should be in global env")
+    assertEquals(listDef.get.ctors.length, 2)
+    assertEquals(listDef.get.ctors(0).name, "nil")
+    assertEquals(listDef.get.ctors(1).name, "cons")
+  }

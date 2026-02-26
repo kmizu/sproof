@@ -475,6 +475,48 @@ object Builtins:
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)
 
+  // ---- rewrite ----
+
+  /** Rewrite the current goal using named equality lemmas.
+    *
+    * For each lemma `h : a = b` in the context,
+    * if the goal is exactly `a = b`, close it with `h`.
+    * Otherwise, use J-rule substitution via simplify infrastructure.
+    */
+  def rewrite(lemmas: List[String])(using env: GlobalEnv): TacticM[Unit] =
+    lemmas match
+      case Nil => trivial
+      case lemmaName :: rest =>
+        for
+          goalPair   <- TacticM.currentGoal
+          (mv, goal)  = goalPair
+          _          <- rewriteWithLemma(mv, goal, lemmaName)
+          _          <- if rest.nonEmpty then rewrite(rest) else TacticM.pure(())
+        yield ()
+
+  /** Rewrite goal using a single lemma. */
+  private def rewriteWithLemma(
+    mv:        MetaVar,
+    goal:      Goal,
+    lemmaName: String,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    findVarByName(goal.ctx, lemmaName) match
+      case Left(err) =>
+        TacticM.fail(err)
+      case Right((ihIdx, ihType)) =>
+        val envForCtx = buildEnvWithDefs(goal.ctx)
+        Eq.extract(ihType) match
+          case None =>
+            TacticM.fail(TacticError.Custom(s"rewrite: $lemmaName is not an equality"))
+          case Some((_, lhsIh, rhsIh)) =>
+            // Check if the goal exactly matches the hypothesis type
+            if Quote.convEqual(goal.ctx.size, envForCtx, goal.target, ihType) then
+              // Goal is exactly the same equality — just use the hypothesis directly
+              TacticM.solveGoalWith(mv, Term.Var(ihIdx))
+            else
+              // Try J-rule approach through simplify
+              simplifyWithIH(mv, goal, lemmaName)
+
   // ---- helpers ----
 
   /** Find a variable by name in the context. Returns (index, type). */

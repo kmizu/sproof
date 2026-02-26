@@ -39,6 +39,8 @@ enum SExpr:
   case SInfix(lhs: SExpr, op: String, rhs: SExpr)
   /** List literal: [e1, e2, e3] — desugars to nested cons/nil in elaborator */
   case SEList(elems: List[SExpr])
+  /** Integer literal: 0, 1, 2, -1, -2 — desugars to Nat/Int constructors */
+  case SEInt(n: Int)
 
 /** Match case in surface syntax. */
 case class SMatchCase(ctor: String, bindings: List[String], body: SExpr)
@@ -58,6 +60,15 @@ enum STactic:
   case SSimp(lemmas: List[String])
   case SInduction(varName: String, cases: List[STacticCase])
   case SSorry
+  /** have h: T = { proof } ; cont_tactic */
+  case SHave(name: String, tpe: SType, proof: SProof, cont: STactic)
+  /** rewrite [lemma1, lemma2] or rewrite lemma */
+  case SRewrite(lemmas: List[String])
+  /** calc { step1 step2 ... } */
+  case SCalc(steps: List[SCalcStep])
+
+/** A step in a calc block: lhs = rhs { proof }. lhs=None means _ (carry forward). */
+case class SCalcStep(lhs: Option[SExpr], rhs: SExpr, proof: SProof)
 
 /** A case in an induction tactic. */
 case class STacticCase(ctorName: String, extraBindings: List[String], tactic: STactic)

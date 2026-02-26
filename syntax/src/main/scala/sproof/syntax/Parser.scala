@@ -36,8 +36,9 @@ object Parser:
         "trivial", "triv", "assume", "apply", "simplify", "simp",
         "induction", "sorry", "fun", "Pi", "Type",
         "structure", "instance", "operator",
+        "have", "rewrite", "calc",
       ),
-      hardOperators = Set("->", "=", "=>", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*"),
+      hardOperators = Set("->", "=", "=>", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-"),
     ),
   ))
 
@@ -112,6 +113,19 @@ object Parser:
     }
 
   // ---- Expression parsing ----
+
+  /** Integer literal: optional minus sign followed by digits.
+    * Consumes trailing whitespace to behave like a proper token.
+    */
+  private lazy val intLiteral: Parsley[SExpr] =
+    atomic(
+      option(parsley.character.char('-')).flatMap { neg =>
+        some(digit).map { digits =>
+          val n = digits.mkString.toInt
+          SExpr.SEInt(if neg.isDefined then -n else n)
+        }
+      }
+    ) <* ws
 
   private lazy val expr: Parsley[SExpr] = choice(
     matchExpr,
@@ -192,13 +206,13 @@ object Parser:
       }
     }
 
-  /** Variable, constructor (Type.ctor), or function application.
+  /** Variable, constructor (Type.ctor), function application, or integer literal.
    *  Supports chained calls: f(a)(b, c) = App(App(f, [a]), [b, c]).
    *  Constructors (Nat.succ) consume their first arg-list in primaryExpr;
    *  further chains like Ctor(x)(y) are parsed as App(Ctor(x), [y]).
    */
   private lazy val appOrVarOrCon: Parsley[SExpr] =
-    primaryExpr.flatMap { head =>
+    (intLiteral <|> primaryExpr).flatMap { head =>
       // Parse the first optional arg-list for non-constructor primaries,
       // then any number of additional chains.
       head match
@@ -351,8 +365,52 @@ object Parser:
     keyword("simplify") *> brackets(sepBy(identifier, op(","))).map(STactic.SSimplify.apply),
     atomic(keyword("simp") *> brackets(sepBy(identifier, op(",")))).map(STactic.SSimp.apply),
     keyword("simp") #> STactic.SSimp(Nil),
+    haveTactic,
+    rewriteTactic,
+    calcTactic,
     inductionTactic,
   )
+
+  /** have h : T = { proof } ; cont_tactic */
+  private lazy val haveTactic: Parsley[STactic] =
+    keyword("have") *> identifier.flatMap { name =>
+      op(":") *> fwd(typeExpr).flatMap { tpe =>
+        op("=") *> braces(fwd(proof)).flatMap { prf =>
+          op(";") *> fwd(tactic).map { cont =>
+            STactic.SHave(name, tpe, prf, cont)
+          }
+        }
+      }
+    }
+
+  /** rewrite [lemma1, lemma2] or rewrite lemma */
+  private lazy val rewriteTactic: Parsley[STactic] =
+    keyword("rewrite") *> choice(
+      brackets(sepBy1(identifier, op(","))).map(STactic.SRewrite.apply),
+      identifier.map(n => STactic.SRewrite(List(n))),
+    )
+
+  /** calc { step1 step2 ... } where step = (expr | _) = expr { proof } */
+  private lazy val calcTactic: Parsley[STactic] =
+    keyword("calc") *> braces(some(calcStep)).map(STactic.SCalc.apply)
+
+  private lazy val calcStep: Parsley[SCalcStep] =
+    choice(
+      // _ = expr { proof }
+      atomic(identifier.filter(_ == "_") *> op("=") *> fwd(expr).flatMap { rhs =>
+        braces(fwd(proof)).map { prf =>
+          SCalcStep(None, rhs, prf)
+        }
+      }),
+      // expr = expr { proof }
+      atomic(fwd(expr).flatMap { lhs =>
+        op("=") *> fwd(expr).flatMap { rhs =>
+          braces(fwd(proof)).map { prf =>
+            SCalcStep(Some(lhs), rhs, prf)
+          }
+        }
+      }),
+    )
 
   private lazy val inductionTactic: Parsley[STactic] =
     keyword("induction") *> identifier.flatMap { varName =>
@@ -432,6 +490,7 @@ object Parser:
     "trivial", "triv", "assume", "apply", "simplify", "simp",
     "induction", "sorry", "fun", "Pi", "Type",
     "structure", "instance", "operator",
+    "have", "rewrite", "calc",
   )
 
   private def isKeyword(s: String): Boolean = keywords.contains(s)

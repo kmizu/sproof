@@ -141,3 +141,28 @@ class BuiltinsSuite extends FunSuite:
   test("SOUNDNESS: assume must not work on concrete (non-Pi) type"):
     val result = prove(empty, Term.Uni(0))(Builtins.assume("x"))
     assert(result.isLeft, "assume must not close a Uni goal!")
+
+  // ======== rewrite ========
+
+  test("rewrite with hypothesis matching goal directly"):
+    // Context: h : Eq(Type1, Type0, Type0)
+    // Goal: Eq(Type1, Type0, Type0)
+    // rewrite [h] should close the goal by using h directly
+    given sproof.core.GlobalEnv = sproof.core.GlobalEnv.empty
+    val eqType = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
+    val ctx    = empty.extend("h", eqType)
+    val result = prove(ctx, eqType)(Builtins.rewrite(List("h")))
+    assert(result.isRight, s"rewrite should close matching goal: $result")
+
+  test("rewrite fails when lemma not found"):
+    given sproof.core.GlobalEnv = sproof.core.GlobalEnv.empty
+    val goal = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
+    val result = prove(empty, goal)(Builtins.rewrite(List("nonexistent")))
+    assert(result.isLeft, "rewrite with unknown lemma should fail")
+
+  test("rewrite fails when lemma is not an equality"):
+    given sproof.core.GlobalEnv = sproof.core.GlobalEnv.empty
+    val ctx    = empty.extend("h", Term.Uni(0))
+    val goal   = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
+    val result = prove(ctx, goal)(Builtins.rewrite(List("h")))
+    assert(result.isLeft, "rewrite with non-equality lemma should fail")

@@ -2,8 +2,8 @@ package sproof
 
 import scala.util.boundary
 import scala.util.boundary.break
-import sproof.core.{Term, Context, GlobalEnv}
-import sproof.syntax.{ElabResult, SProof, STactic, STacticCase}
+import sproof.core.{Term, Context, GlobalEnv, Subst}
+import sproof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep}
 import sproof.tactic.{TacticM, Builtins, TacticError}
 import sproof.kernel.Kernel
 
@@ -59,8 +59,13 @@ object Checker:
         val t = tacticFromSurface(tactic)
         TacticM.prove(ctx, prop)(t).left.map(_.toString)
 
-      case SProof.STerm(_) =>
-        Left("Direct proof terms (STerm) not yet supported in CLI; use 'by' tactics")
+      case SProof.STerm(sexpr) =>
+        import sproof.syntax.Elaborator
+        // Elaborate the expression in the current context
+        val nameEnv = ctx.entries.map(_.name).toList
+        Elaborator.elabExprPublic(sexpr, env, nameEnv) match
+          case Left(err) => Left(s"Term proof elaboration failed: ${err.message}")
+          case Right(term) => Right(term)
 
   /** Convert a surface tactic to a TacticM computation. */
   def tacticFromSurface(t: STactic)(using env: GlobalEnv): TacticM[Unit] = t match
@@ -93,6 +98,15 @@ object Checker:
 
     case STactic.SSorry =>
       sorryCurrentGoal
+
+    case STactic.SHave(name, stpe, proof, cont) =>
+      haveTactic(name, stpe, proof, cont)
+
+    case STactic.SRewrite(lemmas) =>
+      Builtins.rewrite(lemmas)
+
+    case STactic.SCalc(steps) =>
+      calcTactic(steps)
 
   /** Close remaining sub-goals using the specified case tactics in order.
    *
@@ -128,5 +142,48 @@ object Checker:
       val placeholder = sproof.tactic.Eq.mkRefl(goal.target)
       TacticM.solveGoalWith(mv, placeholder)
     }
+
+  /** have h: T = { proof }; cont
+    *
+    * 1. Elaborate the surface type into a core Term
+    * 2. Prove the sub-proposition in the current context
+    * 3. Introduce h: T via Let into the proof
+    * 4. Continue with cont tactic
+    */
+  private def haveTactic(
+    name:  String,
+    stpe:  sproof.syntax.SType,
+    proof: SProof,
+    cont:  STactic,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    import sproof.syntax.Elaborator
+    for
+      goalPair   <- TacticM.currentGoal
+      (mv, goal)  = goalPair
+      // Elaborate the surface type in the current context
+      tpeTerm    <- Elaborator.elabTypePublic(stpe, env, goal.ctx) match
+        case Right(t) => TacticM.pure(t)
+        case Left(e)  => TacticM.fail(TacticError.Custom(s"have: type elaboration failed: ${e.message}"))
+      // Prove the sub-proposition
+      proofTerm  <- executeProof(goal.ctx, tpeTerm, proof) match
+        case Right(t) => TacticM.pure(t)
+        case Left(e)  => TacticM.fail(TacticError.Custom(s"have: sub-proof failed: $e"))
+      // Create new goal with h: T in context via Let
+      newCtx      = goal.ctx.extend(name, tpeTerm)
+      newTarget   = sproof.core.Subst.shift(1, goal.target)
+      mv_cont    <- TacticM.addGoal(newCtx, newTarget)
+      // Evidence: Let(h, T, proofTerm, <cont_proof>)
+      _          <- TacticM.solveGoalWith(mv, sproof.core.Term.Let(name, tpeTerm, proofTerm, sproof.core.Term.Meta(mv_cont.id)))
+      // Run the continuation tactic
+      _          <- tacticFromSurface(cont)
+    yield ()
+
+  /** calc { step1 step2 ... } — chain equality proofs by transitivity */
+  private def calcTactic(
+    steps: List[sproof.syntax.SCalcStep],
+  )(using env: GlobalEnv): TacticM[Unit] =
+    // For now, just try trivial for each step (minimal implementation)
+    // A full implementation would chain transitivity proofs
+    Builtins.trivial
 
 end Checker

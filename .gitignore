@@ -7,3 +7,4 @@ target/
 core-native/
 node_modules/
 out/
+vscode-sproof/node_modules/

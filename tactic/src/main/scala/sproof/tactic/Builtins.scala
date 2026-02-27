@@ -427,18 +427,30 @@ object Builtins:
   private def simplifyWithIH(mv: MetaVar, goal: Goal, ihName: String)(using env: GlobalEnv): TacticM[Unit] =
     findVarByName(goal.ctx, ihName) match
       case Left(_) => trivial   // ih not found: fall back
-      case Right((ihIdx, ihType)) =>
-        Eq.extract(ihType) match
+      case Right((ihIdx, _)) =>
+        // Use the raw stored type (not the over-shifted version from findVarByName)
+        // because buildFixCase stores ih.tpe already shifted for the extended context.
+        val ihTypeRaw = goal.ctx.entries(ihIdx).tpe
+        Eq.extract(ihTypeRaw) match
           case None => trivial  // ih not an equality: fall back
-          case Some((_, lhsIh, _)) =>
+          case Some((_, lhsIh, rhsIh)) =>
             Eq.extract(goal.target) match
               case None => trivial  // goal not an equality: fall back
               case Some((_, lhsGoal, rhsGoal)) =>
-                // Normalise the goal sides to reveal the constructor wrapper
+                // Normalise all sides for comparison and J-rule construction
                 val envForCtx  = buildEnvWithDefs(goal.ctx)
-                val normLhs    = Quote.normalize(goal.ctx.size, envForCtx, lhsGoal)
-                val normRhs    = Quote.normalize(goal.ctx.size, envForCtx, rhsGoal)
-                buildJRuleProof(mv, goal, ihIdx, lhsIh, normLhs, normRhs)
+                val n          = goal.ctx.size
+                val normLhs    = Quote.normalize(n, envForCtx, lhsGoal)
+                val normRhs    = Quote.normalize(n, envForCtx, rhsGoal)
+                val normLhsIh  = Quote.normalize(n, envForCtx, lhsIh)
+                val normRhsIh  = Quote.normalize(n, envForCtx, rhsIh)
+                // Fast path: goal LHS ≡ ih LHS and goal RHS ≡ ih RHS
+                // e.g. mult(succ_k, 0) normalises to mult(k,0), ih: mult(k,0)=0
+                if Quote.convEqual(n, envForCtx, normLhs, normLhsIh) &&
+                   Quote.convEqual(n, envForCtx, normRhs, normRhsIh) then
+                  TacticM.solveGoalWith(mv, Term.Var(ihIdx))
+                else
+                  buildJRuleProof(mv, goal, ihIdx, lhsIh, normLhs, normRhs)
 
   /** Build a J-rule proof for goal `Eq(normLhs, normRhs)` given `ih` at `ihIdx`.
    *

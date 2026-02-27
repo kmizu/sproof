@@ -19,6 +19,9 @@ object Main:
       case "check" :: filePath :: Nil =>
         runCheck(filePath)
 
+      case "check" :: "--json" :: filePath :: Nil =>
+        runCheckJson(filePath)
+
       case "extract" :: filePath :: Nil =>
         runExtract(filePath)
 
@@ -29,6 +32,20 @@ object Main:
       case _ =>
         printUsage()
         sys.exit(1)
+
+  // ---- Check --json command ----
+
+  private def runCheckJson(filePath: String): Unit =
+    val source =
+      try Source.fromFile(filePath).mkString
+      catch
+        case e: java.io.FileNotFoundException =>
+          println(s"""{"ok":false,"error":"File not found: $filePath","phase":"io"}""")
+          sys.exit(1)
+        case e: Exception =>
+          println(s"""{"ok":false,"error":"${e.getMessage}","phase":"io"}""")
+          sys.exit(1)
+    println(processSourceJson(source, filePath))
 
   // ---- Extract command ----
 
@@ -267,9 +284,10 @@ object Main:
   private def printUsage(): Unit =
     println(
       """|Usage:
-         |  sproof check <file.sproof>     Parse, elaborate, and verify a sproof file.
-         |  sproof extract <file.sproof>   Extract Scala 3 code from a verified sproof file.
-         |  sproof repl                    Start the interactive REPL.
+         |  sproof check <file.sproof>          Parse, elaborate, and verify a sproof file.
+         |  sproof check --json <file.sproof>   Same, but output JSON (for tooling/agents).
+         |  sproof extract <file.sproof>        Extract Scala 3 code from a verified sproof file.
+         |  sproof repl                         Start the interactive REPL.
          |""".stripMargin
     )
 

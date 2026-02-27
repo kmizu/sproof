@@ -39,18 +39,20 @@ object Checker:
           case Left(err) =>
             break(Left(s"Proof of '$name' failed: $err"))
           case Right(proofTerm) =>
-            // Wrap proof in lambdas + prop in Pi for the kernel check at Context.empty
-            val fullProofTerm = elabParams.foldRight(proofTerm) { (p, body) =>
-              Term.Lam(p._1, p._2, body)
-            }
-            val fullPropTerm = elabParams.foldRight(propTerm) { (p, cod) =>
-              Term.Pi(p._1, p._2, cod)
-            }
-            Kernel.check(Context.empty, fullProofTerm, fullPropTerm) match
-              case Left(err) =>
-                break(Left(s"Kernel rejected proof of '$name': ${err.getMessage}"))
-              case Right(()) =>
-                ()
+            // Skip kernel check when sorry is used — sorry is intentionally unsound
+            if sorryCount == 0 then
+              // Wrap proof in lambdas + prop in Pi for the kernel check at Context.empty
+              val fullProofTerm = elabParams.foldRight(proofTerm) { (p, body) =>
+                Term.Lam(p._1, p._2, body)
+              }
+              val fullPropTerm = elabParams.foldRight(propTerm) { (p, cod) =>
+                Term.Pi(p._1, p._2, cod)
+              }
+              Kernel.check(Context.empty, fullProofTerm, fullPropTerm) match
+                case Left(err) =>
+                  break(Left(s"Kernel rejected proof of '$name': ${err.getMessage}"))
+                case Right(()) =>
+                  ()
       Right((result.env, sorryWarnings.toList))
 
   /** Count sorry usages in a surface proof. */

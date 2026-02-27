@@ -224,7 +224,7 @@ object Builtins:
           .collectFirst { case (name, bindings) if name == ctorDef.name => bindings }
           .getOrElse(Nil)
         val hasIH = extraBindings.length > ctorDef.argTpes.length
-        buildFixCase(ctx_minus, varIdx, goal, propWithVar0, indDef, ctorDef, hasIH).map { triple =>
+        buildFixCase(ctx_minus, varIdx, goal, propWithVar0, indDef, ctorDef, hasIH, extraBindings).map { triple =>
           cases :+ triple
         }
       }
@@ -245,19 +245,22 @@ object Builtins:
    *    where Var(n+1) = _rec and Var(0) = the last (recursive) ctor arg.
    */
   private def buildFixCase(
-    ctx_minus:   Context,
-    varIdx:      Int,
-    goal:        Term,
+    ctx_minus:    Context,
+    varIdx:       Int,
+    goal:         Term,
     propWithVar0: Term,
-    indDef:      IndDef,
-    ctorDef:     CtorDef,
-    hasIH:       Boolean,
+    indDef:       IndDef,
+    ctorDef:      CtorDef,
+    hasIH:        Boolean,
+    extraBindings: List[String] = Nil,
   )(using env: GlobalEnv): TacticM[(MatchCase, Context, Term)] =
     val n          = ctorDef.argTpes.length
     val ctorArgVars = (0 until n).toList.map(i => Term.Var(n - 1 - i))
     val ctorTerm   = Term.Con(ctorDef.name, indDef.name, ctorArgVars)
     val specialGoal = specializeGoal(goal, varIdx, ctorTerm, n)
-    val ctorCtx    = ctorDef.argTpes.foldLeft(ctx_minus)((c, tpe) => c.extend("_", tpe))
+    // Use user-supplied binding names for ctor args; fall back to "_" if not provided
+    val argNames   = extraBindings.take(n).padTo(n, "_")
+    val ctorCtx    = ctorDef.argTpes.zip(argNames).foldLeft(ctx_minus)((c, pair) => c.extend(pair._2, pair._1))
     if !hasIH then
       for mv <- TacticM.addGoal(ctorCtx, specialGoal)
       yield (MatchCase(ctorDef.name, n, Term.Meta(mv.id)), ctorCtx, specialGoal)
@@ -326,6 +329,7 @@ object Builtins:
     // correctly for the n new ctor-arg bindings added to the context.
     val specialGoal = specializeGoal(goal, varIdx, ctorTerm, n)
     // Build the extended context: ctx_minus + ctor args (foldLeft prepends each, so last arg = Var(0))
+    // (Names are "_" here since generateCtorCase is called without user-provided binding names)
     val extCtx = ctorDef.argTpes.foldLeft(ctx_minus) { (c, argTpe) =>
       c.extend("_", argTpe)
     }

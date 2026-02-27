@@ -4,7 +4,7 @@ import scala.util.boundary
 import scala.util.boundary.break
 import sproof.core.{Term, Context, GlobalEnv, Subst}
 import sproof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep, SExpr}
-import sproof.tactic.{TacticM, Builtins, TacticError}
+import sproof.tactic.{TacticM, Builtins, TacticError, ProofStatePretty}
 import sproof.kernel.Kernel
 
 /** Checks and proves all declarations from an elaboration result.
@@ -20,13 +20,21 @@ object Checker:
     * @return either an error message or the final GlobalEnv after all checks
     */
   def checkAll(result: ElabResult): Either[String, GlobalEnv] =
+    checkAllWithWarnings(result).map(_._1)
+
+  /** Like checkAll but also returns sorry warnings. */
+  def checkAllWithWarnings(result: ElabResult): Either[String, (GlobalEnv, List[String])] =
     given GlobalEnv = result.env
     boundary:
+      val sorryWarnings = scala.collection.mutable.ListBuffer.empty[String]
       for (name, (elabParams, propTerm, proof)) <- result.defspecs do
         // Build context from defspec parameters so the proof can reference them
         val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
           ctx.extend(p._1, p._2)
         }
+        val sorryCount = countSorry(proof)
+        if sorryCount > 0 then
+          sorryWarnings += s"warning: '$name' uses sorry ($sorryCount occurrence(s)) — proof is unsound"
         executeProof(proofCtx, propTerm, proof) match
           case Left(err) =>
             break(Left(s"Proof of '$name' failed: $err"))
@@ -43,7 +51,24 @@ object Checker:
                 break(Left(s"Kernel rejected proof of '$name': ${err.getMessage}"))
               case Right(()) =>
                 ()
-      Right(result.env)
+      Right((result.env, sorryWarnings.toList))
+
+  /** Count sorry usages in a surface proof. */
+  private def countSorry(proof: SProof): Int = proof match
+    case SProof.SBy(tactic) => countSorryTactic(tactic)
+    case SProof.STerm(_)    => 0
+
+  private def countSorryTactic(t: STactic): Int = t match
+    case STactic.SSorry           => 1
+    case STactic.SSeq(ts)         => ts.map(countSorryTactic).sum
+    case STactic.SInduction(_, cases) => cases.map(c => countSorryTactic(c.tactic)).sum
+    case STactic.SCases(_, cases)     => cases.map(c => countSorryTactic(c.tactic)).sum
+    case STactic.SFirst(ts)       => ts.map(countSorryTactic).sum
+    case STactic.SRepeat(t)       => countSorryTactic(t)
+    case STactic.STry(t)          => countSorryTactic(t)
+    case STactic.SAllGoals(t)     => countSorryTactic(t)
+    case STactic.SHave(_, _, p, cont) => countSorry(p) + countSorryTactic(cont)
+    case _                        => 0
 
   /** Execute a surface proof to produce a core proof term.
     *
@@ -57,7 +82,9 @@ object Checker:
     proof match
       case SProof.SBy(tactic) =>
         val t = tacticFromSurface(tactic)
-        TacticM.prove(ctx, prop)(t).left.map(_.toString)
+        TacticM.proveWithState(ctx, prop)(t) match
+          case Right(term)         => Right(term)
+          case Left((err, state))  => Left(ProofStatePretty.format(state, err))
 
       case SProof.STerm(sexpr) =>
         import sproof.syntax.Elaborator
@@ -203,10 +230,19 @@ object Checker:
   private def attemptTrivialOrSorry(using env: GlobalEnv): TacticM[Unit] =
     attemptTrivialOrSorryTactic
 
-  /** Discharge the current goal with a placeholder (sorry). */
+  /** Discharge the current goal with a placeholder (sorry).
+    *
+    * For equality goals `lhs = rhs`, creates `refl(lhs)` — a proof of `lhs = lhs`.
+    * This is unsound when `lhs ≠ rhs`, but passes the kernel when `lhs ≡ rhs`.
+    * The caller is responsible for emitting a sorry warning.
+    */
   private def sorryCurrentGoal: TacticM[Unit] =
     TacticM.currentGoal.flatMap { case (mv, goal) =>
-      val placeholder = sproof.tactic.Eq.mkRefl(goal.target)
+      val eqObj = sproof.tactic.Eq
+      val placeholder = goal.target match
+        case Term.App(Term.App(Term.Ind("Eq", _, _), lhs), _) => eqObj.mkRefl(lhs)
+        case Term.App(Term.App(Term.App(Term.Ind("Eq", _, _), _), lhs), _) => eqObj.mkRefl(lhs)
+        case t => eqObj.mkRefl(t)
       TacticM.solveGoalWith(mv, placeholder)
     }
 

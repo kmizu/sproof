@@ -85,6 +85,78 @@ object Main:
       env    <- Checker.checkAll(result)
     yield (env, result.defspecs.size)
 
+  /** processSource with sorry warnings.
+    *
+    * @return (GlobalEnv, defspecCount, warnings) on success
+    */
+  def processSourceWithWarnings(
+    source:   String,
+    fileName: String = "<input>",
+  ): Either[String, (GlobalEnv, Int, List[String])] =
+    for
+      decls          <- Parser.parseProgram(source).left.map(e => s"Parse error in $fileName:\n$e")
+      result         <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error in $fileName: ${e.message}")
+      envAndWarnings <- Checker.checkAllWithWarnings(result)
+      (env, warnings) = envAndWarnings
+    yield (env, result.defspecs.size, warnings)
+
+  /** processSource with #check results.
+    *
+    * @return (GlobalEnv, defspecCount, checkResults) on success
+    *         checkResults: List[(exprStr, typeStr)]
+    */
+  def processSourceWithChecks(
+    source:   String,
+    fileName: String = "<input>",
+  ): Either[String, (GlobalEnv, Int, List[(String, String)])] =
+    import sproof.checker.Bidirectional
+    for
+      decls  <- Parser.parseProgram(source).left.map(e => s"Parse error in $fileName:\n$e")
+      result <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error in $fileName: ${e.message}")
+      env    <- Checker.checkAll(result)
+    yield
+      given GlobalEnv = env
+      val checkResults = result.checks.map { sexpr =>
+        val exprStr = sexpr.toString
+        Elaborator.elabExprPublic(sexpr, env, Nil) match
+          case Left(err) =>
+            (exprStr, s"error: ${err.message}")
+          case Right(term) =>
+            Bidirectional.infer(Context.empty, term) match
+              case Left(err)  => (exprStr, s"error: ${err.getMessage}")
+              case Right(tpe) => (term.show, tpe.show)
+      }
+      (env, result.defspecs.size, checkResults)
+
+  /** processSource returning JSON string (Feature 2).
+    *
+    * Output format:
+    *   success: {"ok":true,"inductives":N,"defs":N,"defspecs":N}
+    *   failure: {"ok":false,"error":"...","phase":"parse|elab|proof"}
+    */
+  def processSourceJson(source: String, fileName: String = "<input>"): String =
+    def esc(s: String): String =
+      s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+
+    Parser.parseProgram(source) match
+      case Left(parseErr) =>
+        s"""{"ok":false,"error":"${esc(parseErr.toString)}","phase":"parse"}"""
+      case Right(decls) =>
+        Elaborator.elaborate(decls) match
+          case Left(elabErr) =>
+            s"""{"ok":false,"error":"${esc(elabErr.message)}","phase":"elab"}"""
+          case Right(result) =>
+            given GlobalEnv = result.env
+            Checker.checkAllWithWarnings(result) match
+              case Left(proofErr) =>
+                s"""{"ok":false,"error":"${esc(proofErr)}","phase":"proof"}"""
+              case Right((env, warnings)) =>
+                val indCount  = env.inductives.size
+                val defCount  = env.defs.size
+                val specCount = result.defspecs.size
+                val warnJson  = warnings.map(w => s""""${esc(w)}"""").mkString("[", ",", "]")
+                s"""{"ok":true,"inductives":$indCount,"defs":$defCount,"defspecs":$specCount,"warnings":$warnJson}"""
+
   // ---- REPL ----
 
   private def printHelp(): Unit =

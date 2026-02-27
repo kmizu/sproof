@@ -89,20 +89,29 @@ object TacticM:
    *  the main proof term (analogous to unification variable instantiation).
    */
   def prove(ctx: Context, target: Term)(tactic: TacticM[Unit]): Either[TacticError, Term] =
+    proveWithState(ctx, target)(tactic).left.map(_._1)
+
+  /** Like `prove`, but returns the final `ProofState` alongside any `TacticError`.
+   *
+   *  On failure, the returned ProofState captures the unsolved goals and evidence
+   *  at the point of failure — useful for generating diagnostic output.
+   */
+  def proveWithState(ctx: Context, target: Term)(tactic: TacticM[Unit]): Either[(TacticError, ProofState), Term] =
     val mv           = MetaVar(0)
     val initialGoal  = Goal(ctx, target)
     val initialState = ProofState(List(mv -> initialGoal), Map.empty, 1)
     val (finalState, result) = run(tactic, initialState)
-    result.flatMap { _ =>
-      if finalState.goals.nonEmpty then
-        Left(TacticError.Custom(
-          s"Proof incomplete: ${finalState.goals.length} goal(s) remaining"
-        ))
-      else
-        finalState.evidence.get(mv) match
-          case Some(term) => Right(substEvidence(finalState.evidence, term))
-          case None       => Left(TacticError.Custom("Main goal was not solved"))
-    }
+    result match
+      case Left(err) => Left((err, finalState))
+      case Right(_) =>
+        if finalState.goals.nonEmpty then
+          Left((TacticError.Custom(
+            s"Proof incomplete: ${finalState.goals.length} goal(s) remaining"
+          ), finalState))
+        else
+          finalState.evidence.get(mv) match
+            case Some(term) => Right(substEvidence(finalState.evidence, term))
+            case None       => Left((TacticError.Custom("Main goal was not solved"), finalState))
 
   /** Substitute all solved metavariables into a term (fixpoint until stable). */
   private def substEvidence(ev: Map[MetaVar, Term], t: Term): Term =

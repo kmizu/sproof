@@ -11,6 +11,8 @@ case class ElabResult(
   defs:     Map[String, Term],
   /** (params: List[(name, type)], propTerm, proof) — params needed to build the proof context */
   defspecs: Map[String, (List[(String, Term)], Term, SProof)],
+  /** Surface expressions from `#check` declarations, in order of appearance. */
+  checks:   List[SExpr] = Nil,
 )
 
 /** Elaborator: converts surface AST to core terms with De Bruijn indices.
@@ -36,6 +38,7 @@ object Elaborator:
     var env      = GlobalEnv.empty
     var defs     = Map.empty[String, Term]
     var defspecs = Map.empty[String, (List[(String, Term)], Term, SProof)]
+    var checks   = List.empty[SExpr]
 
     for decl <- decls do
       decl match
@@ -137,11 +140,10 @@ object Elaborator:
               // For non-def declarations, just process inner (attrs ignored)
               ()
 
-        case SDecl.SCheck(_) =>
-          // #check is processed by the CLI, not elaborator; skip here
-          ()
+        case SDecl.SCheck(expr) =>
+          checks = checks :+ expr
 
-    Right(ElabResult(env, defs, defspecs))
+    Right(ElabResult(env, defs, defspecs, checks))
 
   /** Public API: elaborate a surface type given a GlobalEnv and a Context.
     * Builds a nameEnv from the context entries.

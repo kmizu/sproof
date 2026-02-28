@@ -27,6 +27,9 @@ object Checker:
     given GlobalEnv = result.env
     boundary:
       val sorryWarnings = scala.collection.mutable.ListBuffer.empty[String]
+      // Track which defspecs are tainted by sorry (directly or transitively)
+      val sorryTainted = scala.collection.mutable.Set.empty[String]
+
       for (name, (elabParams, propTerm, proof)) <- result.defspecs do
         // Build context from defspec parameters so the proof can reference them
         val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
@@ -35,12 +38,21 @@ object Checker:
         val sorryCount = countSorry(proof)
         if sorryCount > 0 then
           sorryWarnings += s"warning: '$name' uses sorry ($sorryCount occurrence(s)) — proof is unsound"
+          sorryTainted += name
+
+        // Check transitive sorry: if this proof references any sorry-tainted lemma
+        val refs = collectLemmaRefs(proof)
+        val taintedRefs = refs.intersect(sorryTainted.toSet)
+        if taintedRefs.nonEmpty && sorryCount == 0 then
+          sorryWarnings += s"warning: '$name' depends on sorry-tainted defspec(s): ${taintedRefs.mkString(", ")} — proof is transitively unsound"
+          sorryTainted += name
+
         executeProof(proofCtx, propTerm, proof) match
           case Left(err) =>
             break(Left(s"Proof of '$name' failed: $err"))
           case Right(proofTerm) =>
-            // Skip kernel check when sorry is used — sorry is intentionally unsound
-            if sorryCount == 0 then
+            // Skip kernel check when sorry is used (directly or transitively)
+            if sorryCount == 0 && !sorryTainted.contains(name) then
               // Wrap proof in lambdas + prop in Pi for the kernel check at Context.empty
               val fullProofTerm = elabParams.foldRight(proofTerm) { (p, body) =>
                 Term.Lam(p._1, p._2, body)
@@ -71,6 +83,26 @@ object Checker:
     case STactic.SAllGoals(t)     => countSorryTactic(t)
     case STactic.SHave(_, _, p, cont) => countSorry(p) + countSorryTactic(cont)
     case _                        => 0
+
+  /** Collect all lemma names referenced in a proof (via simplify, rewrite, etc.). */
+  private def collectLemmaRefs(proof: SProof): Set[String] = proof match
+    case SProof.SBy(tactic) => collectLemmaRefsTactic(tactic)
+    case SProof.STerm(_)    => Set.empty
+
+  private def collectLemmaRefsTactic(t: STactic): Set[String] = t match
+    case STactic.SSimplify(lemmas)    => lemmas.toSet
+    case STactic.SSimp(lemmas)        => lemmas.toSet
+    case STactic.SRw(lemmas)          => lemmas.toSet
+    case STactic.SRewrite(lemmas)     => lemmas.toSet
+    case STactic.SSeq(ts)             => ts.flatMap(collectLemmaRefsTactic).toSet
+    case STactic.SInduction(_, cases) => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
+    case STactic.SCases(_, cases)     => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
+    case STactic.SFirst(ts)           => ts.flatMap(collectLemmaRefsTactic).toSet
+    case STactic.SRepeat(t)           => collectLemmaRefsTactic(t)
+    case STactic.STry(t)              => collectLemmaRefsTactic(t)
+    case STactic.SAllGoals(t)         => collectLemmaRefsTactic(t)
+    case STactic.SHave(_, _, p, cont) => collectLemmaRefs(p) ++ collectLemmaRefsTactic(cont)
+    case _                            => Set.empty
 
   /** Execute a surface proof to produce a core proof term.
     *

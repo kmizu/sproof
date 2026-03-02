@@ -1,0 +1,9 @@
+# Relation baseline lemmas
+contains_empty
+insert_empty
+union_empty_left
+subset_empty_left
+remove_empty
+size_empty
+eq_nat_refl
+contains_insert_zero_zero_empty

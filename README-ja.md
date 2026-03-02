@@ -307,6 +307,26 @@ sbt sproofRepl     # 対話的 REPL を起動
 
 ---
 
+## stdlib v1
+
+`Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect` の標準ライブラリは
+[`stdlib/`](stdlib) 以下にあります。
+
+- レイアウトと命名規約: [docs/stdlib.md](docs/stdlib.md)
+- 利用例: [`examples/stdlib/`](examples/stdlib)
+
+---
+
+## stdlib Bundles
+
+再利用可能な補題 bundle マニフェストは `stdlib/bundles/` にあります。
+
+- ドキュメントと互換性ポリシー: [docs/lemma-bundles.md](docs/lemma-bundles.md)
+- 利用可能な bundle: `nat-simplify`, `list-core`, `bool-normalize`, `dictionary-core`, `relation-core`
+- bundle 利用例: [examples/bundles/nat_bundle_usage.sproof](examples/bundles/nat_bundle_usage.sproof)
+
+---
+
 ## ライセンス
 
 MIT

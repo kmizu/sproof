@@ -347,7 +347,8 @@ sbt sproofRepl     # Interactive REPL
 
 ## stdlib v1
 
-Baseline stdlib modules for `Nat`, `List`, `Vec`, and `Bool` are available under [`stdlib/`](stdlib).
+Baseline stdlib modules for `Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, and `Effect`
+are available under [`stdlib/`](stdlib).
 
 - Layout and naming conventions: [docs/stdlib.md](docs/stdlib.md)
 - Usage examples: [`examples/stdlib/`](examples/stdlib)
@@ -359,6 +360,7 @@ Baseline stdlib modules for `Nat`, `List`, `Vec`, and `Bool` are available under
 Reusable lemma bundle manifests are available under `stdlib/bundles/`.
 
 - Bundle documentation and compatibility policy: [docs/lemma-bundles.md](docs/lemma-bundles.md)
+- Available bundles: `nat-simplify`, `list-core`, `bool-normalize`, `dictionary-core`, `relation-core`
 - Representative bundle-oriented example: [examples/bundles/nat_bundle_usage.sproof](examples/bundles/nat_bundle_usage.sproof)
 
 ---

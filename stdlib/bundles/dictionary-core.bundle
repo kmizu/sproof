@@ -1,0 +1,9 @@
+# Dictionary baseline lemmas
+eq_nat_refl
+lookup_empty
+member_empty
+remove_empty
+size_empty
+size_insert
+lookup_insert_zero
+lookup_insert_one

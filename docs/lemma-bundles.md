@@ -7,6 +7,8 @@ This document defines reusable lemma bundles for common proof maintenance workfl
 - `nat-simplify`
 - `list-core`
 - `bool-normalize`
+- `dictionary-core`
+- `relation-core`
 
 Bundle manifests live under `stdlib/bundles/*.bundle`.
 
@@ -30,6 +32,28 @@ Bundle manifests live under `stdlib/bundles/*.bundle`.
 - `not_not`
 - `and_true`
 - `or_false`
+
+### dictionary-core
+
+- `eq_nat_refl`
+- `lookup_empty`
+- `member_empty`
+- `remove_empty`
+- `size_empty`
+- `size_insert`
+- `lookup_insert_zero`
+- `lookup_insert_one`
+
+### relation-core
+
+- `contains_empty`
+- `insert_empty`
+- `union_empty_left`
+- `subset_empty_left`
+- `remove_empty`
+- `size_empty`
+- `eq_nat_refl`
+- `contains_insert_zero_zero_empty`
 
 ## Compatibility policy
 

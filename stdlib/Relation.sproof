@@ -115,6 +115,13 @@ defspec size_empty(): size(Relation.empty) = Nat.zero {
   by trivial
 }
 
+defspec eq_nat_refl(n: Nat): eq_nat(n, n) = Bool.true {
+  by induction n {
+    case zero => trivial
+    case succ k ih => simplify [ih]
+  }
+}
+
 defspec contains_insert_zero_zero_empty(): contains(insert(Relation.empty, Nat.zero, Nat.zero), Nat.zero, Nat.zero) = Bool.true {
   by trivial
 }

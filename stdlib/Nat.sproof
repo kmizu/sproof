@@ -12,6 +12,12 @@ def plus(n: Nat, m: Nat): Nat {
   }
 }
 
+// n = n
+
+defspec refl(n: Nat): n = n {
+  by trivial
+}
+
 // plus(zero, m) = m
 
 defspec plus_zero_left(m: Nat): plus(Nat.zero, m) = m {

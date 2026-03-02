@@ -1,0 +1,5 @@
+// Uses stdlib/List.sproof declarations directly (prepend stdlib source before this file)
+
+defspec append_nil_left_use(ys: List): append(List.nil, ys) = ys {
+  by trivial
+}

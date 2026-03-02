@@ -1,0 +1,42 @@
+package sproof
+
+import java.nio.file.{Files, Paths}
+import munit.FunSuite
+
+class StdlibSuite extends FunSuite:
+
+  private def read(path: String): String =
+    Files.readString(Paths.get(path))
+
+  test("stdlib v1 files parse/elaborate/check successfully"):
+    val files = List(
+      "stdlib/Nat.sproof",
+      "stdlib/List.sproof",
+      "stdlib/Vec.sproof",
+      "stdlib/Bool.sproof",
+    )
+    files.foreach { file =>
+      val src = read(file)
+      val result = Main.processSource(src, file)
+      assert(result.isRight, s"stdlib file should pass checker: $file -> $result")
+    }
+
+  test("usage examples consume stdlib declarations directly (concatenated source)"):
+    val pairs = List(
+      ("stdlib/Nat.sproof", "examples/stdlib/nat_usage.sproof"),
+      ("stdlib/List.sproof", "examples/stdlib/list_usage.sproof"),
+      ("stdlib/Vec.sproof", "examples/stdlib/vec_usage.sproof"),
+      ("stdlib/Bool.sproof", "examples/stdlib/bool_usage.sproof"),
+    )
+    pairs.foreach { (lib, usage) =>
+      val src = read(lib) + "\n\n" + read(usage)
+      val result = Main.processSource(src, s"$lib + $usage")
+      assert(result.isRight, s"usage should type-check with stdlib declarations: $lib + $usage -> $result")
+    }
+
+  test("stdlib naming/layout conventions are documented"):
+    val doc = read("docs/stdlib.md")
+    assert(doc.contains("stdlib/Nat.sproof"))
+    assert(doc.contains("stdlib/List.sproof"))
+    assert(doc.contains("stdlib/Vec.sproof"))
+    assert(doc.contains("stdlib/Bool.sproof"))

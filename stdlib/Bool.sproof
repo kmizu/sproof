@@ -1,0 +1,48 @@
+// stdlib v1: Bool
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def not(b: Bool): Bool {
+  match b {
+    case Bool.true  => Bool.false
+    case Bool.false => Bool.true
+  }
+}
+
+def and(b1: Bool, b2: Bool): Bool {
+  match b1 {
+    case Bool.true  => b2
+    case Bool.false => Bool.false
+  }
+}
+
+def or(b1: Bool, b2: Bool): Bool {
+  match b1 {
+    case Bool.true  => Bool.true
+    case Bool.false => b2
+  }
+}
+
+defspec not_not(b: Bool): not(not(b)) = b {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+defspec and_true(b: Bool): and(b, Bool.true) = b {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+defspec or_false(b: Bool): or(b, Bool.false) = b {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}

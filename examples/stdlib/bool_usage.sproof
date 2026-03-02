@@ -1,0 +1,8 @@
+// Uses stdlib/Bool.sproof declarations directly (prepend stdlib source before this file)
+
+defspec and_true_use(b: Bool): and(b, Bool.true) = b {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}

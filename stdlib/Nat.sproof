@@ -1,0 +1,43 @@
+// stdlib v1: Nat
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+// plus(zero, m) = m
+
+defspec plus_zero_left(m: Nat): plus(Nat.zero, m) = m {
+  by trivial
+}
+
+// plus(succ(n), m) = succ(plus(n, m))
+
+defspec plus_succ_left(n: Nat, m: Nat): plus(Nat.succ(n), m) = Nat.succ(plus(n, m)) {
+  by trivial
+}
+
+// plus(n, zero) = n
+
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}
+
+// plus(n, succ(m)) = succ(plus(n, m))
+
+defspec plus_succ_right(n: Nat, m: Nat): plus(n, Nat.succ(m)) = Nat.succ(plus(n, m)) {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}

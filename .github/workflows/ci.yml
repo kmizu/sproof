@@ -7,6 +7,24 @@ on:
     branches: [main]
 
 jobs:
+  # ---- Dedicated kernel soundness gate ----
+  kernel-soundness:
+    name: Kernel soundness gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+
+      - uses: sbt/setup-sbt@v1
+
+      - name: Run trusted-kernel soundness tests
+        run: sbt kernel/test
+
   # ---- JVM: compile + test ----
   test:
     name: Test (JVM, Scala 3.3.6)

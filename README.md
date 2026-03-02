@@ -241,6 +241,10 @@ sproof/
 └── cli/        # REPL and file loader
 ```
 
+## Trust Model
+
+Soundness boundary and trusted computing base (TCB) are documented in [docs/trust-model.md](docs/trust-model.md).
+
 **Type theory**: Predicative CIC (Calculus of Inductive Constructions)
 - Universe hierarchy: `Type`, `Type1`, `Type2`, ...
 - Inductive types + fixpoints (recursive functions)

@@ -29,6 +29,23 @@ object SearchLoop:
   def search(ctx: Context, prop: Term)(using env: GlobalEnv): Option[STactic] =
     searchWithConfig(ctx, prop, SearchConfig()).found
 
+  /** Search plus diagnostics about induction-variable strategy.
+   *
+   * Diagnostics are emitted only when no proof is found.
+   */
+  def searchWithDiagnostics(ctx: Context, prop: Term)(using env: GlobalEnv): (Option[STactic], List[String]) =
+    val rankedVars = TacticGen.rankedInductionVars(ctx, prop).map(_._1)
+    val result = searchWithConfig(ctx, prop, SearchConfig())
+    val diagnostics =
+      if result.found.nonEmpty then Nil
+      else
+        List(
+          s"induction variable order: ${rankedVars.mkString(", ")}",
+          s"fallback induction candidates tried: ${rankedVars.length}",
+          s"proof search exhausted after ${result.stats.exploredNodes} candidate(s)",
+        )
+    (result.found, diagnostics)
+
   /** Search with configurable depth/node limits and deterministic pruning. */
   def searchWithConfig(
     ctx: Context,

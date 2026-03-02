@@ -198,3 +198,26 @@ class SearchLoopSuite extends FunSuite:
     assertEquals(ranked.map(_.key).distinct.size, ranked.size)
     val nonIncreasing = ranked.zip(ranked.drop(1)).forall { case (a, b) => a.score >= b.score }
     assert(nonIncreasing, s"candidate scores should be non-increasing: $ranked")
+
+  test("rankedInductionVars prefers variables that appear in the goal"):
+    given GlobalEnv = GlobalEnv.withNat
+    val nat  = Term.Ind("Nat", Nil, Nil)
+    // Context order: m = Var(0), n = Var(1)
+    val ctx  = Context.empty.extend("n", nat).extend("m", nat)
+    // Goal mentions n (Var(1)) only; n should be ranked before m.
+    val goal = Eq.mkType(nat, Term.Var(1), Term.Var(1))
+    val ranked = TacticGen.rankedInductionVars(ctx, goal).map(_._1)
+    assert(ranked.nonEmpty, "expected inductive vars in ranking")
+    assertEquals(ranked.head, "n")
+
+  test("searchWithDiagnostics reports fallback details when search fails"):
+    given GlobalEnv = GlobalEnv.withNat
+    val nat  = Term.Ind("Nat", Nil, Nil)
+    val zero = Term.Con("zero", "Nat", Nil)
+    val ctx  = Context.empty.extend("n", nat)
+    val goal = Eq.mkType(nat, Term.Var(0), zero)
+
+    val (found, diagnostics) = SearchLoop.searchWithDiagnostics(ctx, goal)
+    assert(found.isEmpty, "expected failure for n = zero without assumptions")
+    assert(diagnostics.exists(_.contains("induction variable order")), s"missing induction order diagnostics: $diagnostics")
+    assert(diagnostics.exists(_.contains("fallback induction candidates tried")), s"missing fallback diagnostics: $diagnostics")

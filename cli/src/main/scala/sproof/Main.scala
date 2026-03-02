@@ -2,8 +2,7 @@ package sproof
 
 import scala.io.{Source, StdIn}
 import scala.collection.mutable
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
+import scala.util.hashing.MurmurHash3
 import sproof.core.{GlobalEnv, Context}
 import sproof.syntax.{Parser, Elaborator, ElabResult, SDecl}
 import sproof.tactic.TacticError
@@ -464,9 +463,10 @@ object Main:
                 Right((env, result.defspecs.size, warnings))
 
   private def hashString(value: String): String =
-    val digest = MessageDigest.getInstance("SHA-256")
-    val bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8))
-    bytes.map("%02x".format(_)).mkString
+    // Keep hashing portable across JVM and Scala Native (avoid java.security APIs).
+    val h1 = MurmurHash3.stringHash(value, 0x9e3779b9)
+    val h2 = MurmurHash3.stringHash(value.reverse, 0x85ebca6b)
+    f"${h1.toLong & 0xffffffffL}%08x${h2.toLong & 0xffffffffL}%08x"
 
   private def declHashFor(decls: List[SDecl]): String =
     val payload = decls.map(_.toString).mkString("\u241F")

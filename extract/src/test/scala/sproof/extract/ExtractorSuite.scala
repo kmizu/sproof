@@ -164,6 +164,42 @@ class ExtractorSuite extends FunSuite:
     assert(result.contains("def zero"),    s"expected def zero, got:\n$result")
   }
 
+  test("extractProgram emits IORuntime when IO default shape is present") {
+    val ioDef = IndDef(
+      name = "IO",
+      params = Nil,
+      ctors = List(
+        CtorDef("pure", List(Term.Ind("Int", Nil, Nil))),
+        CtorDef("read_int", Nil),
+        CtorDef("print_int", List(Term.Ind("Int", Nil, Nil))),
+        CtorDef("bind", List(Term.Ind("IO", Nil, Nil), Term.Pi("_", Term.Ind("Int", Nil, Nil), Term.Ind("IO", Nil, Nil)))),
+      ),
+      universe = 0,
+    )
+    val intDef = IndDef(
+      name = "Int",
+      params = Nil,
+      ctors = List(
+        CtorDef("zero", Nil),
+        CtorDef("pos", List(natInd)),
+        CtorDef("neg", List(natInd)),
+      ),
+      universe = 0,
+    )
+    val env = GlobalEnv.empty.addInd(natDef).addInd(intDef).addInd(ioDef)
+    val result = Extractor.extractProgram(env)
+    assert(result.contains("object IORuntime"), s"expected generated runtime, got:\n$result")
+    assert(result.contains("def run(script: IO): Int"), s"runtime entrypoint missing, got:\n$result")
+    assert(result.contains("def runWithTrace(script: IO, inputs: List[Int]): Trace"), s"trace entrypoint missing, got:\n$result")
+    assert(result.contains("final case class Trace("), s"trace payload type missing, got:\n$result")
+  }
+
+  test("extractProgram does not emit IORuntime when IO is absent") {
+    val env = GlobalEnv.withNat
+    val result = Extractor.extractProgram(env)
+    assert(!result.contains("object IORuntime"), s"runtime should not be generated, got:\n$result")
+  }
+
   test("termToScalaExpr: Meta becomes ???") {
     val result = Extractor.termToScalaExpr(Term.Meta(42))
     assertEquals(result, "???")

@@ -1,0 +1,42 @@
+// stdlib v1: Effect (trusted-boundary friendly IO script)
+//
+// Design:
+// - Keep the kernel pure: IO is represented as a syntax tree.
+// - Execute effects only outside the kernel (e.g. extracted Scala runtime).
+// - This module models side-effectful programs without adding impure reduction rules.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Int {
+  case zero: Int
+  case pos(n: Nat): Int
+  case neg(n: Nat): Int
+}
+
+// Effect script (free-monad-like AST specialized to Int results).
+inductive IO {
+  case pure(value: Int): IO
+  case read_int: IO
+  case print_int(value: Int): IO
+  case bind(action: IO, k: Int -> IO): IO
+}
+
+def io_pure(value: Int): IO = IO.pure(value)
+
+def io_read(): IO = IO.read_int
+
+def io_print(value: Int): IO = IO.print_int(value)
+
+def io_bind(action: IO, k: Int -> IO): IO = IO.bind(action, k)
+
+def io_then(action: IO, next: IO): IO = io_bind(action, fun (ignored: Int) => next)
+
+def echo_once(): IO =
+  io_bind(io_read(), fun (x: Int) => io_then(io_print(x), io_pure(x)))
+
+defspec io_then_desugars(action: IO, next: IO): io_then(action, next) = io_bind(action, fun (ignored: Int) => next) {
+  by trivial
+}

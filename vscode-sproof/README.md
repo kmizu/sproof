@@ -71,7 +71,7 @@ npm install
 npm run compile
 # Install vsce if needed: npm install -g @vscode/vsce
 vsce package
-code --install-extension vscode-sproof-0.1.0.vsix
+code --install-extension vscode-sproof-0.2.0.vsix
 ```
 
 ### Development (F5)

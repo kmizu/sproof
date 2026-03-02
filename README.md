@@ -106,6 +106,18 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
+### v0.2 Release Notes
+
+- changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- release notes: [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.2.md`](RELEASE_CHECKLIST_v0.2.md)
+
+### Migration Notes (v0.1 -> v0.2)
+
+- Core CLI commands are unchanged.
+- `check --json` remains the machine-readable integration path.
+- `examples/vec.sproof` uses argument ordering in `concat` that is compatible with structural recursion checking.
+
 ---
 
 ## Language Guide

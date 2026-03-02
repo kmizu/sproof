@@ -9,6 +9,7 @@ val munitVersion   = "1.0.2"
 
 val commonSettings = Seq(
   scalaVersion := scala3Version,
+  version := "0.2.0",
   organization := "io.sproof",
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-core" % catsVersion,
@@ -22,6 +23,7 @@ val commonSettings = Seq(
 // Uses %%% so cats-core and munit resolve as native artifacts.
 val nativeCommonSettings = Seq(
   scalaVersion := scala3Version,
+  version := "0.2.0",
   organization := "io.sproof",
   libraryDependencies ++= Seq(
     "org.typelevel" %%% "cats-core" % catsVersion,

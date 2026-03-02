@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] — 2026-03-02
 
 ### Added
 - Goal/subgoal visualization command: `sproof: Show Goals`
@@ -8,6 +8,10 @@
 - Automatic goal refresh on save for `.sproof` files
 - Structured diagnostics integration via `sproof check --json`
 - Problems panel support with source ranges and expected/actual type details
+
+### Changed
+- Version bump for the v0.2 release.
+- Documentation refresh for release packaging flow.
 
 ## [0.1.0] — 2026-02-26
 

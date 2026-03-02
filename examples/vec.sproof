@@ -36,17 +36,19 @@ inductive Vec(A: Type)(n: Nat) {
 
 // ---- Operations ----
 
-// concat two Vecs (index args m: Nat are witnesses for the length)
-def concat(xs: Vec, ys: Vec, A: Type, n: Nat, m: Nat): Vec {
+// concat two Vecs.
+// The first argument is the decreasing index witness `n` so the current
+// structural termination checker can recognize recursive descent.
+def concat(n: Nat, A: Type, xs: Vec, m: Nat, ys: Vec): Vec {
   match xs {
     case Vec.nil           => ys
-    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(t, ys, A, k, m))
+    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(k, A, t, m, ys))
   }
 }
 
 // ---- Simple specification ----
 
 // Appending an empty Vec is a no-op
-defspec concat_nil(A: Type, ys: Vec): concat(Vec.nil, ys, A, Nat.zero, Nat.zero) = ys {
+defspec concat_nil(A: Type, ys: Vec): concat(Nat.zero, A, Vec.nil, Nat.zero, ys) = ys {
   by trivial
 }

@@ -96,6 +96,16 @@ Repeated checks in the same JVM process reuse parse/elaboration/proof results wi
 - strategy document: [`INCREMENTAL_CHECKING.md`](INCREMENTAL_CHECKING.md)
 - safe fallback: if cache keys mismatch, sproof re-checks from the affected stage
 
+### Benchmark Suite
+
+```bash
+python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --output benchmarks/results.json
+```
+
+- uses multiple runs and median to reduce noise
+- compares workload medians against CI thresholds
+- writes a machine-readable report at `benchmarks/results.json`
+
 ---
 
 ## Language Guide

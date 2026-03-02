@@ -8,6 +8,7 @@ build/
 node_modules/
 out/
 vscode-sproof/node_modules/
+benchmarks/results.json
 # Native stub directories (sources shared from JVM modules, no source files here)
 core-native/target/
 eval-native/target/

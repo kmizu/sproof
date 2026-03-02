@@ -1,0 +1,10 @@
+{
+  "runs": 3,
+  "workloads": {
+    "nat": 25000,
+    "int": 25000,
+    "list": 25000,
+    "bool": 25000
+  },
+  "totalMedianMs": 90000
+}

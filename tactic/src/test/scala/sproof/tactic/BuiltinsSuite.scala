@@ -166,3 +166,24 @@ class BuiltinsSuite extends FunSuite:
     val goal   = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
     val result = prove(ctx, goal)(Builtins.rewrite(List("h")))
     assert(result.isLeft, "rewrite with non-equality lemma should fail")
+
+  test("simplify uses priority ordering from rewrite DB specs"):
+    given sproof.core.GlobalEnv = sproof.core.GlobalEnv.empty
+    val eqType = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
+    // Context indices: hHigh = Var(0), hLow = Var(1)
+    val ctx = empty.extend("hLow", eqType).extend("hHigh", eqType)
+    val result = prove(ctx, eqType)(Builtins.simplify(List("hLow__p1", "hHigh__p10")))
+    result match
+      case Right(term) => assertEquals(term, Term.Var(0))
+      case Left(err)   => fail(s"expected successful simplify, got $err")
+
+  test("simplify supports backward direction with __rev for direct symmetry"):
+    given sproof.core.GlobalEnv = sproof.core.GlobalEnv.empty
+    val nat   = Term.Ind("Nat", Nil, Nil)
+    val zero  = Term.Con("zero", "Nat", Nil)
+    val one   = Term.Con("succ", "Nat", List(zero))
+    val eqFwd = Eq.mkType(nat, zero, one)
+    val goal  = Eq.mkType(nat, one, zero)
+    val ctx   = empty.extend("h", eqFwd)
+    val result = prove(ctx, goal)(Builtins.simplify(List("h__rev")))
+    assert(result.isRight, s"expected backward rewrite to close direct symmetric goal: $result")

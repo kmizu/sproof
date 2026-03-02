@@ -1,0 +1,120 @@
+// stdlib v1: Relation (Nat-valued finite binary relation)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def eq_nat(a: Nat, b: Nat): Bool {
+  match a {
+    case Nat.zero =>
+      match b {
+        case Nat.zero    => Bool.true
+        case Nat.succ(m) => Bool.false
+      }
+    case Nat.succ(n) =>
+      match b {
+        case Nat.zero    => Bool.false
+        case Nat.succ(m) => eq_nat(n, m)
+      }
+  }
+}
+
+def eq_pair(a1: Nat, b1: Nat, a2: Nat, b2: Nat): Bool {
+  match eq_nat(a1, a2) {
+    case Bool.true  => eq_nat(b1, b2)
+    case Bool.false => Bool.false
+  }
+}
+
+inductive Relation {
+  case empty: Relation
+  case pair(left: Nat, right: Nat, tail: Relation): Relation
+}
+
+def contains(r: Relation, left: Nat, right: Nat): Bool {
+  match r {
+    case Relation.empty => Bool.false
+    case Relation.pair(x, y, rest) =>
+      match eq_pair(x, y, left, right) {
+        case Bool.true  => Bool.true
+        case Bool.false => contains(rest, left, right)
+      }
+  }
+}
+
+def insert(r: Relation, left: Nat, right: Nat): Relation {
+  match contains(r, left, right) {
+    case Bool.true  => r
+    case Bool.false => Relation.pair(left, right, r)
+  }
+}
+
+def union(left: Relation, right: Relation): Relation {
+  match left {
+    case Relation.empty => right
+    case Relation.pair(x, y, rest) => union(rest, insert(right, x, y))
+  }
+}
+
+def subset(left: Relation, right: Relation): Bool {
+  match left {
+    case Relation.empty => Bool.true
+    case Relation.pair(x, y, rest) =>
+      match contains(right, x, y) {
+        case Bool.true  => subset(rest, right)
+        case Bool.false => Bool.false
+      }
+  }
+}
+
+def remove(r: Relation, left: Nat, right: Nat): Relation {
+  match r {
+    case Relation.empty => Relation.empty
+    case Relation.pair(x, y, rest) =>
+      match eq_pair(x, y, left, right) {
+        case Bool.true  => remove(rest, left, right)
+        case Bool.false => Relation.pair(x, y, remove(rest, left, right))
+      }
+  }
+}
+
+def size(r: Relation): Nat {
+  match r {
+    case Relation.empty => Nat.zero
+    case Relation.pair(x, y, rest) => Nat.succ(size(rest))
+  }
+}
+
+defspec contains_empty(left: Nat, right: Nat): contains(Relation.empty, left, right) = Bool.false {
+  by trivial
+}
+
+defspec insert_empty(left: Nat, right: Nat): insert(Relation.empty, left, right) = Relation.pair(left, right, Relation.empty) {
+  by trivial
+}
+
+defspec union_empty_left(right: Relation): union(Relation.empty, right) = right {
+  by trivial
+}
+
+defspec subset_empty_left(right: Relation): subset(Relation.empty, right) = Bool.true {
+  by trivial
+}
+
+defspec remove_empty(left: Nat, right: Nat): remove(Relation.empty, left, right) = Relation.empty {
+  by trivial
+}
+
+defspec size_empty(): size(Relation.empty) = Nat.zero {
+  by trivial
+}
+
+defspec contains_insert_zero_zero_empty(): contains(insert(Relation.empty, Nat.zero, Nat.zero), Nat.zero, Nat.zero) = Bool.true {
+  by trivial
+}

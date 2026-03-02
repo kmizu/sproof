@@ -1,0 +1,12 @@
+// Uses stdlib/Relation.sproof declarations directly (prepend stdlib source before this file)
+
+def sample_relation(): Relation =
+  insert(insert(Relation.empty, Nat.zero, Nat.succ(Nat.zero)), Nat.succ(Nat.zero), Nat.zero)
+
+defspec sample_contains(): contains(sample_relation(), Nat.zero, Nat.succ(Nat.zero)) = Bool.true {
+  by trivial
+}
+
+defspec insert_zero_zero_use(): contains(insert(Relation.empty, Nat.zero, Nat.zero), Nat.zero, Nat.zero) = Bool.true {
+  by trivial
+}

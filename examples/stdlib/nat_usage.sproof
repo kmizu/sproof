@@ -1,0 +1,5 @@
+// Uses stdlib/Nat.sproof declarations directly (prepend stdlib source before this file)
+
+defspec plus_zero_left_use(m: Nat): plus(Nat.zero, m) = m {
+  by trivial
+}

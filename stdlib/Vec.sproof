@@ -1,0 +1,31 @@
+// stdlib v1: Vec (indexed)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+inductive Vec(A: Type)(n: Nat) {
+  case nil: Vec
+  case cons(m: Nat, head: A, tail: Vec(A)): Vec
+}
+
+def concat(xs: Vec, ys: Vec, A: Type, n: Nat, m: Nat): Vec {
+  match xs {
+    case Vec.nil           => ys
+    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(t, ys, A, k, m))
+  }
+}
+
+// length consistency baseline lemma for nil branch
+
+defspec concat_nil(A: Type, ys: Vec): concat(Vec.nil, ys, A, Nat.zero, Nat.zero) = ys {
+  by trivial
+}

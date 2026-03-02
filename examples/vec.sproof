@@ -37,16 +37,16 @@ inductive Vec(A: Type)(n: Nat) {
 // ---- Operations ----
 
 // concat two Vecs (index args m: Nat are witnesses for the length)
-def concat(A: Type, n: Nat, m: Nat, xs: Vec, ys: Vec): Vec {
+def concat(xs: Vec, ys: Vec, A: Type, n: Nat, m: Nat): Vec {
   match xs {
     case Vec.nil           => ys
-    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(A, k, m, t, ys))
+    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(t, ys, A, k, m))
   }
 }
 
 // ---- Simple specification ----
 
 // Appending an empty Vec is a no-op
-defspec concat_nil(A: Type, ys: Vec): concat(A, Nat.zero, Nat.zero, Vec.nil, ys) = ys {
+defspec concat_nil(A: Type, ys: Vec): concat(Vec.nil, ys, A, Nat.zero, Nat.zero) = ys {
   by trivial
 }

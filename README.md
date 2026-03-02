@@ -314,6 +314,13 @@ sbt sproofExtract  # Extract to Scala 3 source (runs before compile)
 sbt sproofRepl     # Interactive REPL
 ```
 
+## stdlib v1
+
+Baseline stdlib modules for `Nat`, `List`, `Vec`, and `Bool` are available under [`stdlib/`](stdlib).
+
+- Layout and naming conventions: [docs/stdlib.md](docs/stdlib.md)
+- Usage examples: [`examples/stdlib/`](examples/stdlib)
+
 ---
 
 ## License

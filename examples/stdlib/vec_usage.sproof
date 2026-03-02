@@ -1,0 +1,5 @@
+// Uses stdlib/Vec.sproof declarations directly (prepend stdlib source before this file)
+
+defspec concat_nil_use(A: Type, ys: Vec): concat(Vec.nil, ys, A, Nat.zero, Nat.zero) = ys {
+  by trivial
+}

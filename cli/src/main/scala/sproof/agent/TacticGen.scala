@@ -1,64 +1,115 @@
 package sproof.agent
 
-import sproof.core.{Term, Context, GlobalEnv, IndDef, CtorDef}
+import sproof.core.{Term, Context, GlobalEnv, IndDef}
 import sproof.syntax.{STactic, STacticCase}
 import sproof.tactic.Eq
 
-/** Generates candidate STactic values for a given proof goal.
+/** Generates scored tactic candidates for proof search.
  *
- *  Two levels of depth:
- *   - Depth 0: trivial, assumption, simplify[h] for each equality hypothesis
- *   - Depth 1: induction on each inductive variable, with depth-0 sub-proofs
+ *  Depth levels:
+ *  - depth 0: single-step tactics (`trivial`, `assumption`, `simplify[h]`)
+ *  - depth 1: structural induction candidates
  *
- *  Designed for the proof agent loop: ordered by expected success probability.
+ *  Candidates are scored and de-duplicated deterministically.
  */
 object TacticGen:
 
-  /** Generate candidate tactics for a goal, shallowest first. */
-  def candidates(ctx: Context, target: Term)(using env: GlobalEnv): List[STactic] =
+  final case class ScoredCandidate(
+    tactic: STactic,
+    score: Int,
+    key: String,
+  )
+
+  /** Generate ordered tactic candidates for a goal. */
+  def candidates(ctx: Context, target: Term, maxDepth: Int = 1)(using env: GlobalEnv): List[STactic] =
+    rankedCandidates(ctx, target, maxDepth).map(_.tactic)
+
+  /** Generate scored candidates sorted by descending score. */
+  def rankedCandidates(ctx: Context, target: Term, maxDepth: Int = 1)(using env: GlobalEnv): List[ScoredCandidate] =
+    dedupeCandidates(rawCandidates(ctx, target, maxDepth))
+
+  private[agent] def rawCandidates(
+    ctx: Context,
+    target: Term,
+    maxDepth: Int = 1,
+  )(using env: GlobalEnv): List[ScoredCandidate] =
     val d0 = depth0(ctx, target)
-    val d1 = depth1(ctx, target, d0)
+    val d1 =
+      if maxDepth >= 1 then depth1(ctx, target, d0.map(_.tactic))
+      else Nil
     d0 ++ d1
+
+  private[agent] def dedupeCandidates(cands: List[ScoredCandidate]): List[ScoredCandidate] =
+    dedupeAndSort(cands)
 
   // ---- Depth 0: single-step tactics ----
 
-  private def depth0(ctx: Context, target: Term)(using env: GlobalEnv): List[STactic] =
-    List(STactic.STrivial, STactic.SAssumption) ++
-    eqHypNames(ctx).map(h => STactic.SSimplify(List(h)))
+  private def depth0(ctx: Context, target: Term)(using env: GlobalEnv): List[ScoredCandidate] =
+    val trivial = ScoredCandidate(STactic.STrivial, scoreTrivial(target), tacticKey(STactic.STrivial))
+    val assumption = ScoredCandidate(STactic.SAssumption, scoreAssumption(ctx, target), tacticKey(STactic.SAssumption))
+    val simpRules = eqHypNames(ctx).map { h =>
+      val tac = STactic.SSimplify(List(h))
+      ScoredCandidate(tac, scoreSimplify(h), tacticKey(tac))
+    }
+    trivial :: assumption :: simpRules
 
-  // ---- Depth 1: induction with depth-0 sub-proofs ----
+  // ---- Depth 1: induction candidates ----
 
-  private def depth1(ctx: Context, target: Term, subTactics: List[STactic])(using env: GlobalEnv): List[STactic] =
+  private def depth1(ctx: Context, target: Term, subTactics: List[STactic])(using env: GlobalEnv): List[ScoredCandidate] =
     inductiveVars(ctx).flatMap { (varName, indDef) =>
-      buildInductionCandidates(varName, indDef, subTactics)
+      buildInductionCandidates(varName, indDef, subTactics).map { tac =>
+        ScoredCandidate(tac, scoreInduction(indDef), tacticKey(tac))
+      }
     }
 
-  /** For each inductive type constructor, build STacticCase options.
-   *
-   *  - Non-recursive ctor (e.g. zero): try each sub-tactic
-   *  - Recursive ctor (e.g. succ k): try with IH — bindings = [k, ih], tactic = simplify[ih] or each sub-tactic
-   */
+  /** For each constructor, build STacticCase options and take cartesian combinations. */
   private def buildInductionCandidates(
     varName: String,
-    indDef:  IndDef,
+    indDef: IndDef,
     subTactics: List[STactic],
   ): List[STactic] =
-    // For each constructor, generate a list of STacticCase options
     val perCtorOptions: List[List[STacticCase]] = indDef.ctors.map { ctor =>
       if ctor.argTpes.isEmpty then
-        // Non-recursive: try each sub-tactic
         subTactics.map(t => STacticCase(ctor.name, Nil, t))
       else
-        // Recursive: try with IH (simplify[ih]) + sub-tactics without IH
         val argNames  = ctor.argTpes.indices.map(i => s"_arg$i").toList
         val withIH    = STacticCase(ctor.name, argNames :+ "ih", STactic.SSimplify(List("ih")))
         val withoutIH = subTactics.map(t => STacticCase(ctor.name, argNames, t))
         withIH :: withoutIH
     }
-    // Cross product: pick one option per constructor
     cartesian(perCtorOptions).map(cases => STactic.SInduction(varName, cases))
 
+  // ---- Scoring ----
+
+  private def scoreTrivial(target: Term): Int =
+    Eq.extract(target) match
+      case Some((_, lhs, rhs)) if lhs == rhs => 1000
+      case Some(_)                           => 500
+      case None                              => 100
+
+  private def scoreAssumption(ctx: Context, target: Term): Int =
+    val exactHit = ctx.entries.exists(e => e.tpe == target)
+    if exactHit then 950 else 400
+
+  private def scoreSimplify(name: String): Int =
+    700 + math.min(name.length, 30)
+
+  private def scoreInduction(indDef: IndDef): Int =
+    300 - indDef.ctors.length
+
   // ---- Helpers ----
+
+  private def dedupeAndSort(cands: List[ScoredCandidate]): List[ScoredCandidate] =
+    val bestByKey = scala.collection.mutable.LinkedHashMap.empty[String, ScoredCandidate]
+    cands.foreach { cand =>
+      bestByKey.get(cand.key) match
+        case Some(prev) if prev.score >= cand.score => ()
+        case _                                      => bestByKey.update(cand.key, cand)
+    }
+    bestByKey.values.toList.sortBy(c => (-c.score, c.key))
+
+  private def tacticKey(tac: STactic): String =
+    tac.toString
 
   /** Names of equality hypotheses in the context. */
   private def eqHypNames(ctx: Context): List[String] =

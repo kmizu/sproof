@@ -2,6 +2,8 @@ package sproof.agent
 
 import munit.FunSuite
 import sproof.Main
+import sproof.core.{Context, GlobalEnv, Term}
+import sproof.tactic.Eq
 
 /** Tests for the proof agent's search loop.
  *
@@ -169,3 +171,30 @@ class SearchLoopSuite extends FunSuite:
     """
     val repaired = repairSource(src)
     assert(verifies(repaired))
+
+  test("searchWithConfig enforces deterministic maxNodes limit"):
+    given GlobalEnv = GlobalEnv.withNat
+    val nat  = Term.Ind("Nat", Nil, Nil)
+    val ctx  = Context.empty.extend("n", nat)
+    val goal = Eq.mkType(nat, Term.Var(0), Term.Con("zero", "Nat", Nil))
+
+    val config = SearchLoop.SearchConfig(maxDepth = 1, maxNodes = 1)
+    val r1 = SearchLoop.searchWithConfig(ctx, goal, config)
+    val r2 = SearchLoop.searchWithConfig(ctx, goal, config)
+
+    assertEquals(r1.found, r2.found, "search should be deterministic with same limits")
+    assertEquals(r1.stats.exploredNodes, 1, "maxNodes=1 should cap explored nodes")
+    assert(r1.stats.uniqueCandidates >= 2, s"expected >1 candidate for this goal: ${r1.stats}")
+    assert(r1.stats.hitNodeLimit, s"expected node-limit flag: ${r1.stats}")
+
+  test("ranked candidates are sorted by score and de-duplicated"):
+    given GlobalEnv = GlobalEnv.withNat
+    val nat   = Term.Ind("Nat", Nil, Nil)
+    val ctx   = Context.empty.extend("n", nat)
+    val goal  = Eq.mkType(nat, Term.Var(0), Term.Var(0))
+    val ranked = TacticGen.rankedCandidates(ctx, goal, maxDepth = 1)
+
+    assert(ranked.nonEmpty, "ranked candidates should not be empty")
+    assertEquals(ranked.map(_.key).distinct.size, ranked.size)
+    val nonIncreasing = ranked.zip(ranked.drop(1)).forall { case (a, b) => a.score >= b.score }
+    assert(nonIncreasing, s"candidate scores should be non-increasing: $ranked")

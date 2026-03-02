@@ -88,6 +88,22 @@ class KernelSuite extends FunSuite:
     // Var(0) in empty context
     assert(Kernel.check(empty, Term.Var(0), Term.Uni(0)).isLeft)
 
+  test("SOUNDNESS: De Bruijn escape in lambda body is rejected"):
+    // λx:Type0. Var(1) tries to reference an out-of-scope variable.
+    val badProof = Term.Lam("x", Term.Uni(0), Term.Var(1))
+    val claim    = Term.Pi("x", Term.Uni(0), Term.Uni(0))
+    assert(Kernel.check(empty, badProof, claim).isLeft)
+
+  test("SOUNDNESS: equality universe witness mismatch is rejected"):
+    // Eq Type0 Type0 Type0 is ill-typed because Type0 : Type1, not Type0.
+    val badEqType = Eq.mkType(Term.Uni(0), Term.Uni(0), Term.Uni(0))
+    val refl      = Eq.mkRefl(Term.Uni(0))
+    assert(Kernel.check(empty, refl, badEqType).isLeft)
+
+  test("SOUNDNESS: downward cumulativity is rejected in kernel verification"):
+    // Type2 does NOT inhabit Type1.
+    assert(Kernel.check(empty, Term.Uni(2), Term.Uni(1)).isLeft)
+
   // --- kernel is independent of checker internals ---
 
   test("kernel re-checks: does not trust tactic output blindly"):

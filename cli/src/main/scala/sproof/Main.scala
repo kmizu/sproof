@@ -1,8 +1,10 @@
 package sproof
 
 import scala.io.{Source, StdIn}
+import scala.collection.mutable
+import scala.util.hashing.MurmurHash3
 import sproof.core.{GlobalEnv, Context}
-import sproof.syntax.{Parser, Elaborator, ElabResult}
+import sproof.syntax.{Parser, Elaborator, ElabResult, SDecl}
 import sproof.tactic.TacticError
 import sproof.extract.Extractor
 
@@ -19,7 +21,6 @@ object Main:
     diagnostics: List[Diagnostic],
   )
 
-
   private[sproof] final case class CheckCliOptions(
     filePath: String,
     json: Boolean,
@@ -34,6 +35,39 @@ object Main:
     dependsOn: List[String],
     message: String,
   )
+
+  final case class IncrementalStats(
+    parseCacheHit: Boolean,
+    elabCacheHit:  Boolean,
+    proofCacheHit: Boolean,
+  )
+
+  private final case class ParseCacheEntry(
+    sourceHash: String,
+    declHash: String,
+    decls: List[SDecl],
+  )
+
+  private final case class ElabCacheEntry(
+    declHash: String,
+    programHash: String,
+    result: ElabResult,
+  )
+
+  private final case class ProofCacheEntry(
+    programHash: String,
+    outcome: Either[String, (GlobalEnv, List[String], Int)],
+  )
+
+  // File-scoped incremental caches (used by repeated checks in the same JVM process).
+  private val parseCache = mutable.Map.empty[String, ParseCacheEntry]
+  private val elabCache  = mutable.Map.empty[String, ElabCacheEntry]
+  private val proofCache = mutable.Map.empty[String, ProofCacheEntry]
+
+  def resetIncrementalCache(): Unit =
+    parseCache.clear()
+    elabCache.clear()
+    proofCache.clear()
 
   def main(args: Array[String]): Unit =
     args.toList match
@@ -198,10 +232,8 @@ object Main:
     * @return the final GlobalEnv on success, or an error message
     */
   def processSource(source: String, fileName: String = "<input>"): Either[String, (GlobalEnv, Int)] =
-    processSourceDetailed(source, fileName)
-      .map { case (env, defspecCount, _) => (env, defspecCount) }
-      .left
-      .map(_.error)
+    processSourceWithIncrementalStats(source, fileName)
+      .map { case (env, defspecCount, _, _) => (env, defspecCount) }
 
   /** processSource with sorry warnings.
     *
@@ -211,10 +243,82 @@ object Main:
     source:   String,
     fileName: String = "<input>",
   ): Either[String, (GlobalEnv, Int, List[String])] =
-    processSourceDetailed(source, fileName)
-      .map { case (env, defspecCount, warnings) => (env, defspecCount, warnings) }
-      .left
-      .map(_.error)
+    processSourceWithIncrementalStats(source, fileName)
+      .map { case (env, defspecCount, warnings, _) => (env, defspecCount, warnings) }
+
+  /** processSource with incremental cache stats.
+    *
+    * Used for tests and tooling that want to observe cache hit behavior.
+    */
+  def processSourceWithIncrementalStats(
+    source:   String,
+    fileName: String = "<input>",
+  ): Either[String, (GlobalEnv, Int, List[String], IncrementalStats)] =
+    val safeFileKey = if fileName.nonEmpty then fileName else "<input>"
+    val sourceHash = hashString(source)
+    var parseHit = false
+    var elabHit = false
+    var proofHit = false
+
+    val (decls, declHash) =
+      parseCache.get(safeFileKey) match
+        case Some(entry) if entry.sourceHash == sourceHash =>
+          parseHit = true
+          (entry.decls, entry.declHash)
+        case _ =>
+          Parser.parseProgram(source) match
+            case Left(parseErr) =>
+              parseCache.remove(safeFileKey)
+              elabCache.remove(safeFileKey)
+              proofCache.remove(safeFileKey)
+              return Left(s"Parse error in $safeFileKey:\n$parseErr")
+            case Right(parsedDecls) =>
+              val newDeclHash = declHashFor(parsedDecls)
+              val prevDeclHash = parseCache.get(safeFileKey).map(_.declHash)
+              parseCache.update(safeFileKey, ParseCacheEntry(sourceHash, newDeclHash, parsedDecls))
+              if prevDeclHash.forall(_ != newDeclHash) then
+                elabCache.remove(safeFileKey)
+                proofCache.remove(safeFileKey)
+              (parsedDecls, newDeclHash)
+
+    val (elabResult, programHash) =
+      elabCache.get(safeFileKey) match
+        case Some(entry) if entry.declHash == declHash =>
+          elabHit = true
+          (entry.result, entry.programHash)
+        case _ =>
+          Elaborator.elaborate(decls) match
+            case Left(elabErr) =>
+              elabCache.remove(safeFileKey)
+              proofCache.remove(safeFileKey)
+              return Left(s"Elaboration error in $safeFileKey: ${elabErr.message}")
+            case Right(result) =>
+              val newProgramHash = programHashFor(result)
+              val prevProgramHash = elabCache.get(safeFileKey).map(_.programHash)
+              elabCache.update(safeFileKey, ElabCacheEntry(declHash, newProgramHash, result))
+              if prevProgramHash.forall(_ != newProgramHash) then
+                proofCache.remove(safeFileKey)
+              (result, newProgramHash)
+
+    val proofOutcome =
+      proofCache.get(safeFileKey) match
+        case Some(entry) if entry.programHash == programHash =>
+          proofHit = true
+          entry.outcome
+        case _ =>
+          given GlobalEnv = elabResult.env
+          val computed = Checker
+            .checkAllWithWarnings(elabResult)
+            .map { case (env, warnings) =>
+              (env, warnings, elabResult.defspecs.size)
+            }
+          proofCache.update(safeFileKey, ProofCacheEntry(programHash, computed))
+          computed
+
+    proofOutcome.map { case (env, warnings, defspecCount) =>
+      val stats = IncrementalStats(parseHit, elabHit, proofHit)
+      (env, defspecCount, warnings, stats)
+    }
 
   /** processSource with #check results.
     *
@@ -357,6 +461,33 @@ object Main:
                 Left(CheckFailure("proof", message, Diagnostics.fromFailure(source, "proof", proofErr)))
               case Right((env, warnings)) =>
                 Right((env, result.defspecs.size, warnings))
+
+  private def hashString(value: String): String =
+    // Keep hashing portable across JVM and Scala Native (avoid java.security APIs).
+    val h1 = MurmurHash3.stringHash(value, 0x9e3779b9)
+    val h2 = MurmurHash3.stringHash(value.reverse, 0x85ebca6b)
+    f"${h1.toLong & 0xffffffffL}%08x${h2.toLong & 0xffffffffL}%08x"
+
+  private def declHashFor(decls: List[SDecl]): String =
+    val payload = decls.map(_.toString).mkString("\u241F")
+    hashString(payload)
+
+  private def programHashFor(result: ElabResult): String =
+    val inductivePart = result.env.inductives.toList.sortBy(_._1).map { case (name, ind) =>
+      val params = ind.params.map(p => s"${p.name}:${p.tpe.show}").mkString(",")
+      val indices = ind.indices.map(i => s"${i.name}:${i.tpe.show}").mkString(",")
+      val ctors = ind.ctors.map(c => s"${c.name}:${c.argTpes.map(_.show).mkString("->")}").mkString(";")
+      s"$name|$params|$indices|$ctors"
+    }.mkString("||")
+    val defsPart = result.defs.toList.sortBy(_._1).map { case (name, term) =>
+      s"$name=${term.show}"
+    }.mkString("||")
+    val defspecPart = result.defspecs.toList.sortBy(_._1).map { case (name, (params, prop, proof)) =>
+      val paramPart = params.map(p => s"${p._1}:${p._2.show}").mkString(",")
+      s"$name|$paramPart|${prop.show}|${proof.toString}"
+    }.mkString("||")
+    val checksPart = result.checks.map(_.toString).mkString("||")
+    hashString(s"$inductivePart###$defsPart###$defspecPart###$checksPart")
 
   // ---- REPL ----
 

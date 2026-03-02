@@ -89,6 +89,13 @@ OK: examples/nat.sproof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 JSON output schema is documented in [docs/json-schema.md](docs/json-schema.md).
 Proof onboarding recipes: [docs/proof-cookbook.md](docs/proof-cookbook.md)
 
+### Incremental Check Cache
+
+Repeated checks in the same JVM process reuse parse/elaboration/proof results with staged invalidation.
+
+- strategy document: [`INCREMENTAL_CHECKING.md`](INCREMENTAL_CHECKING.md)
+- safe fallback: if cache keys mismatch, sproof re-checks from the affected stage
+
 ---
 
 ## Language Guide

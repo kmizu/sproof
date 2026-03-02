@@ -239,19 +239,32 @@ object Main:
       }
       (env, result.defspecs.size, checkResults)
 
-  /** processSource returning JSON string (Feature 2).
+  /** processSource returning stable JSON schema v2.
     *
-    * Output format:
-    *   success: {"ok":true,"inductives":N,"defs":N,"defspecs":N}
-    *   failure: {"ok":false,"error":"...","phase":"parse|elab|proof"}
+    * v2 shape always includes:
+    * - schemaVersion (number)
+    * - ok (boolean)
+    * - phase (parse|elab|proof|policy|check)
+    * - file (string)
+    * - result ({inductives, defs, defspecs} | null)
+    * - warnings (array)
+    * - sorryDiagnostics (array)
+    * - diagnostics (array)
+    * - checks (array)
+    * - error (string | null)
     */
   def processSourceJson(
     source: String,
     fileName: String = "<input>",
     failOnSorry: Boolean = false,
   ): String =
+    import sproof.checker.Bidirectional
+
     def esc(s: String): String =
       s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+
+    def warningJson(message: String): String =
+      s"""{"severity":"warning","code":"sorry","message":"${esc(message)}"}"""
 
     def toJsonDiagnostic(d: SorryDiagnostic): String =
       val occJson = d.occurrences match
@@ -260,29 +273,50 @@ object Main:
       val depsJson = d.dependsOn.map(dep => s""""${esc(dep)}"""").mkString("[", ",", "]")
       s"""{"code":"${esc(d.code)}","defspec":"${esc(d.defspec)}","transitive":${d.transitive},"occurrences":$occJson,"dependsOn":$depsJson,"message":"${esc(d.message)}"}"""
 
+    def diagnosticJson(phase: String, message: String): String =
+      s"""{"severity":"error","phase":"${esc(phase)}","message":"${esc(message)}"}"""
+
+    def failJson(phase: String, message: String): String =
+      val diagJson = diagnosticJson(phase, message)
+      s"""{"schemaVersion":2,"ok":false,"phase":"${esc(phase)}","file":"${esc(fileName)}","result":null,"warnings":[],"sorryDiagnostics":[],"diagnostics":[$diagJson],"checks":[],"error":"${esc(message)}"}"""
+
     Parser.parseProgram(source) match
       case Left(parseErr) =>
-        s"""{"ok":false,"error":"${esc(parseErr.toString)}","phase":"parse"}"""
+        failJson("parse", parseErr.toString)
       case Right(decls) =>
         Elaborator.elaborate(decls) match
           case Left(elabErr) =>
-            s"""{"ok":false,"error":"${esc(elabErr.message)}","phase":"elab"}"""
+            failJson("elab", elabErr.message)
           case Right(result) =>
             given GlobalEnv = result.env
             Checker.checkAllWithWarnings(result) match
               case Left(proofErr) =>
-                s"""{"ok":false,"error":"${esc(proofErr)}","phase":"proof"}"""
+                failJson("proof", proofErr)
               case Right((env, warnings)) =>
-                val indCount  = env.inductives.size
-                val defCount  = env.defs.size
-                val specCount = result.defspecs.size
-                val warnJson  = warnings.map(w => s""""${esc(w)}"""").mkString("[", ",", "]")
+                val indCount   = env.inductives.size
+                val defCount   = env.defs.size
+                val specCount  = result.defspecs.size
+                val warnJson   = warnings.map(warningJson).mkString("[", ",", "]")
                 val sorryDiagnostics = warnings.map(parseSorryDiagnostic)
-                val diagJson = sorryDiagnostics.map(toJsonDiagnostic).mkString("[", ",", "]")
+                val sorryDiagJson = sorryDiagnostics.map(toJsonDiagnostic).mkString("[", ",", "]")
+                val checkJson  = result.checks.map { sexpr =>
+                  val exprStr = sexpr.toString
+                  Elaborator.elabExprPublic(sexpr, env, Nil) match
+                    case Left(err) =>
+                      s"""{"expr":"${esc(exprStr)}","ok":false,"type":null,"error":"${esc(err.message)}"}"""
+                    case Right(term) =>
+                      Bidirectional.infer(Context.empty, term) match
+                        case Left(err) =>
+                          s"""{"expr":"${esc(term.show)}","ok":false,"type":null,"error":"${esc(err.getMessage)}"}"""
+                        case Right(tpe) =>
+                          s"""{"expr":"${esc(term.show)}","ok":true,"type":"${esc(tpe.show)}","error":null}"""
+                }.mkString("[", ",", "]")
                 if failOnSorry && warnings.nonEmpty then
-                  s"""{"ok":false,"error":"sorry policy violation (use of sorry is disallowed in this mode)","phase":"policy","warnings":$warnJson,"sorryDiagnostics":$diagJson}"""
+                  val msg = "sorry policy violation (use of sorry is disallowed in this mode)"
+                  val policyDiagJson = diagnosticJson("policy", msg)
+                  s"""{"schemaVersion":2,"ok":false,"phase":"policy","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[$policyDiagJson],"checks":$checkJson,"error":"$msg"}"""
                 else
-                  s"""{"ok":true,"inductives":$indCount,"defs":$defCount,"defspecs":$specCount,"warnings":$warnJson,"sorryDiagnostics":$diagJson}"""
+                  s"""{"schemaVersion":2,"ok":true,"phase":"check","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[],"checks":$checkJson,"error":null}"""
 
   // ---- REPL ----
 

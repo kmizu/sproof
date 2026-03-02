@@ -86,6 +86,8 @@ sbt "cli/run check examples/nat.sproof"
 OK: examples/nat.sproof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
+JSON output schema is documented in [docs/json-schema.md](docs/json-schema.md).
+
 ---
 
 ## Language Guide

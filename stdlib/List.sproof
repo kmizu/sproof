@@ -5,6 +5,13 @@ inductive Nat {
   case succ(n: Nat): Nat
 }
 
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
 inductive List {
   case nil: List
   case cons(head: Nat, tail: List): List
@@ -24,8 +31,14 @@ def append(xs: List, ys: List): List {
   }
 }
 
-// map as Nat->Nat for v1 baseline (recursive arg first for termination checker)
+def reverse(xs: List): List {
+  match xs {
+    case List.nil        => List.nil
+    case List.cons(h, t) => append(reverse(t), List.cons(h, List.nil))
+  }
+}
 
+// map as Nat->Nat for v1 baseline (recursive arg first for termination checker)
 def map(xs: List, f: Nat -> Nat): List {
   match xs {
     case List.nil        => List.nil
@@ -42,5 +55,9 @@ defspec append_nil_left(ys: List): append(List.nil, ys) = ys {
 }
 
 defspec map_nil(f: Nat -> Nat): map(List.nil, f) = List.nil {
+  by trivial
+}
+
+defspec reverse_nil(): reverse(List.nil) = List.nil {
   by trivial
 }

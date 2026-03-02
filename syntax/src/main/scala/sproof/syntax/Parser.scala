@@ -553,10 +553,12 @@ object Parser:
       else STactic.SSeq(tactics)
     }
 
-  /** have h : T = { proof } ; cont_tactic */
+  /** have h : T = { proof } ; cont_tactic
+    * T can be a regular type or an equality proposition.
+    */
   private lazy val haveTactic: Parsley[STactic] =
     keyword("have") *> identifier.flatMap { name =>
-      op(":") *> fwd(typeExpr).flatMap { tpe =>
+      op(":") *> fwd(propType).flatMap { tpe =>
         op("=") *> braces(fwd(proof)).flatMap { prf =>
           op(";") *> fwd(tactic).map { cont =>
             STactic.SHave(name, tpe, prf, cont)

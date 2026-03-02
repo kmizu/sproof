@@ -2,7 +2,7 @@ package sproof
 
 import scala.util.boundary
 import scala.util.boundary.break
-import sproof.core.{Term, Context, GlobalEnv, Subst}
+import sproof.core.{Term, Context, GlobalEnv, Subst, DefEntry}
 import sproof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep, SExpr}
 import sproof.tactic.{TacticM, Builtins, TacticError, ProofStatePretty}
 import sproof.kernel.Kernel
@@ -40,36 +40,44 @@ object Checker:
     boundary:
       val sorryWarnings = scala.collection.mutable.ListBuffer.empty[String]
       val candidates = scala.collection.mutable.ListBuffer.empty[ProofCandidate]
+      var proofEnv = env
       // Track which defspecs are tainted by sorry (directly or transitively)
       val sorryTainted = scala.collection.mutable.Set.empty[String]
 
-      for (name, (elabParams, propTerm, proof)) <- result.defspecs do
-        val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
-          ctx.extend(p._1, p._2)
-        }
-        val sorryCount = countSorry(proof)
-        if sorryCount > 0 then
-          sorryWarnings += s"warning: '$name' uses sorry ($sorryCount occurrence(s)) — proof is unsound"
-          sorryTainted += name
-
-        val refs = collectLemmaRefs(proof)
-        val taintedRefs = refs.intersect(sorryTainted.toSet)
-        if taintedRefs.nonEmpty && sorryCount == 0 then
-          sorryWarnings += s"warning: '$name' depends on sorry-tainted defspec(s): ${taintedRefs.mkString(", ")} — proof is transitively unsound"
-          sorryTainted += name
-
-        executeProof(proofCtx, propTerm, proof) match
-          case Left(err) =>
-            break(Left(s"Proof of '$name' failed: $err"))
-          case Right(proofTerm) =>
-            val fullProofTerm = elabParams.foldRight(proofTerm) { (p, body) =>
-              Term.Lam(p._1, p._2, body)
+      for name <- defspecNamesInSourceOrder(result) do
+        result.defspecs.get(name) match
+          case None =>
+            break(Left(s"Internal error: defspec '$name' missing from elaboration map"))
+          case Some((elabParams, propTerm, proof)) =>
+            val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
+              ctx.extend(p._1, p._2)
             }
-            val fullPropTerm = elabParams.foldRight(propTerm) { (p, cod) =>
-              Term.Pi(p._1, p._2, cod)
-            }
-            val skipKernel = sorryCount > 0 || sorryTainted.contains(name)
-            candidates += ProofCandidate(name, fullProofTerm, fullPropTerm, skipKernel)
+            val sorryCount = countSorry(proof)
+            if sorryCount > 0 then
+              sorryWarnings += s"warning: '$name' uses sorry ($sorryCount occurrence(s)) — proof is unsound"
+              sorryTainted += name
+
+            val refs = collectLemmaRefs(proof)
+            val taintedRefs = refs.intersect(sorryTainted.toSet).toList.sorted
+            if taintedRefs.nonEmpty && sorryCount == 0 then
+              sorryWarnings += s"warning: '$name' depends on sorry-tainted defspec(s): ${taintedRefs.mkString(", ")} — proof is transitively unsound"
+              sorryTainted += name
+
+            executeProof(proofCtx, propTerm, proof)(using proofEnv) match
+              case Left(err) =>
+                break(Left(s"Proof of '$name' failed: $err"))
+              case Right(proofTerm) =>
+                val fullProofTerm = elabParams.foldRight(proofTerm) { (p, body) =>
+                  Term.Lam(p._1, p._2, body)
+                }
+                val fullPropTerm = elabParams.foldRight(propTerm) { (p, cod) =>
+                  Term.Pi(p._1, p._2, cod)
+                }
+                val skipKernel = sorryCount > 0 || sorryTainted.contains(name)
+                candidates += ProofCandidate(name, fullProofTerm, fullPropTerm, skipKernel)
+                // Make previously proved theorems available to later proofs.
+                // This enables proof reuse via term proofs / exact theorem calls.
+                proofEnv = proofEnv.addDef(DefEntry(name, fullPropTerm, fullProofTerm))
 
       Right((candidates.toList, sorryWarnings.toList))
 
@@ -116,13 +124,47 @@ object Checker:
   /** Collect all lemma names referenced in a proof (via simplify, rewrite, etc.). */
   private def collectLemmaRefs(proof: SProof): Set[String] = proof match
     case SProof.SBy(tactic) => collectLemmaRefsTactic(tactic)
-    case SProof.STerm(_)    => Set.empty
+    case SProof.STerm(expr) => collectLemmaRefsExpr(expr)
+
+  private def collectLemmaRefsExpr(expr: SExpr, bound: Set[String] = Set.empty): Set[String] = expr match
+    case SExpr.SEVar(name) =>
+      if bound.contains(name) then Set.empty else Set(name)
+    case SExpr.SEApp(fn, args) =>
+      collectLemmaRefsExpr(fn, bound) ++ args.flatMap(arg => collectLemmaRefsExpr(arg, bound))
+    case SExpr.SELam(params, body) =>
+      val nextBound = bound ++ params.map(_.name)
+      collectLemmaRefsExpr(body, nextBound)
+    case SExpr.SEMatch(scrutinee, cases) =>
+      val scrRefs = collectLemmaRefsExpr(scrutinee, bound)
+      val caseRefs = cases.flatMap { mc =>
+        collectLemmaRefsExpr(mc.body, bound ++ mc.bindings)
+      }.toSet
+      scrRefs ++ caseRefs
+    case SExpr.SECon(_, _, args) =>
+      args.flatMap(arg => collectLemmaRefsExpr(arg, bound)).toSet
+    case SExpr.SInfix(lhs, _, rhs) =>
+      collectLemmaRefsExpr(lhs, bound) ++ collectLemmaRefsExpr(rhs, bound)
+    case SExpr.SEList(elems) =>
+      elems.flatMap(elem => collectLemmaRefsExpr(elem, bound)).toSet
+    case SExpr.SEInt(_) =>
+      Set.empty
+    case SExpr.SELet(name, value, body) =>
+      collectLemmaRefsExpr(value, bound) ++ collectLemmaRefsExpr(body, bound + name)
+    case SExpr.SEAscr(inner, _) =>
+      collectLemmaRefsExpr(inner, bound)
+    case SExpr.SEIf(cond, thenBr, elseBr) =>
+      collectLemmaRefsExpr(cond, bound) ++
+        collectLemmaRefsExpr(thenBr, bound) ++
+        collectLemmaRefsExpr(elseBr, bound)
 
   private def collectLemmaRefsTactic(t: STactic): Set[String] = t match
     case STactic.SSimplify(lemmas)    => lemmas.toSet
     case STactic.SSimp(lemmas)        => lemmas.toSet
     case STactic.SRw(lemmas)          => lemmas.toSet
     case STactic.SRewrite(lemmas)     => lemmas.toSet
+    case STactic.SApply(expr)         => collectLemmaRefsExpr(expr)
+    case STactic.SExact(expr)         => collectLemmaRefsExpr(expr)
+    case STactic.SCalc(steps)         => steps.flatMap(step => collectLemmaRefs(step.proof)).toSet
     case STactic.SSeq(ts)             => ts.flatMap(collectLemmaRefsTactic).toSet
     case STactic.SInduction(_, cases) => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
     case STactic.SCases(_, cases)     => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
@@ -132,6 +174,14 @@ object Checker:
     case STactic.SAllGoals(t)         => collectLemmaRefsTactic(t)
     case STactic.SHave(_, _, p, cont) => collectLemmaRefs(p) ++ collectLemmaRefsTactic(cont)
     case _                            => Set.empty
+
+  private def defspecNamesInSourceOrder(result: ElabResult): List[String] =
+    if result.defspecOrder.isEmpty then
+      result.defspecs.keys.toList.sorted
+    else
+      val ordered = result.defspecOrder.filter(result.defspecs.contains)
+      val remaining = result.defspecs.keySet -- ordered
+      ordered ++ remaining.toList.sorted
 
   /** Execute a surface proof to produce a core proof term.
     *

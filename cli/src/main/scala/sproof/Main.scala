@@ -486,8 +486,9 @@ object Main:
       val paramPart = params.map(p => s"${p._1}:${p._2.show}").mkString(",")
       s"$name|$paramPart|${prop.show}|${proof.toString}"
     }.mkString("||")
+    val defspecOrderPart = result.defspecOrder.mkString("||")
     val checksPart = result.checks.map(_.toString).mkString("||")
-    hashString(s"$inductivePart###$defsPart###$defspecPart###$checksPart")
+    hashString(s"$inductivePart###$defsPart###$defspecPart###$defspecOrderPart###$checksPart")
 
   // ---- REPL ----
 

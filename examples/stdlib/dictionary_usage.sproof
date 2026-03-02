@@ -1,0 +1,12 @@
+// Uses stdlib/Dictionary.sproof declarations directly (prepend stdlib source before this file)
+
+def sample_dict(): Dictionary =
+  insert(insert(Dictionary.empty, Nat.zero, Nat.succ(Nat.zero)), Nat.succ(Nat.zero), Nat.zero)
+
+defspec sample_lookup(): lookup(sample_dict(), Nat.zero) = MaybeNat.some(Nat.succ(Nat.zero)) {
+  by trivial
+}
+
+defspec insert_zero_use(d: Dictionary, value: Nat): lookup(insert(d, Nat.zero, value), Nat.zero) = MaybeNat.some(value) {
+  by trivial
+}

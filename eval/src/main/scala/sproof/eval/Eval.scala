@@ -64,8 +64,10 @@ object Eval:
       case Semantic.SCon(ctorName, _, args) =>
         cases.find(_.ctor == ctorName) match
           case Some(mc) =>
-            // Extend env with constructor arguments (reversed, head = index 0)
-            val extEnv = args.foldRight(env)(_ :: _)
+            // De Bruijn convention in elaborated match bodies:
+            // Var(0) = last constructor argument, Var(1) = second-to-last, ...
+            // So we must push args in declaration order by prepending each one.
+            val extEnv = args.foldLeft(env) { (acc, argVal) => argVal :: acc }
             eval(extEnv, mc.body)
           case None =>
             throw RuntimeException(s"Non-exhaustive match: no case for constructor '$ctorName'")
@@ -76,7 +78,7 @@ object Eval:
         // (calling the closure for recursive functions like `plus` would diverge).
         val neutralCases = cases.map { mc =>
           NeutralCase(mc.ctor, mc.bindings,
-            argVals => { val extEnv = argVals.foldRight(env)(_ :: _); eval(extEnv, mc.body) },
+            argVals => { val extEnv = argVals.foldLeft(env) { (acc, argVal) => argVal :: acc }; eval(extEnv, mc.body) },
             mc,
             env)
         }

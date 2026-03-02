@@ -1,6 +1,6 @@
 # stdlib v1 layout and naming
 
-This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, and `Effect`.
+This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Dictionary`, and `Effect`.
 
 ## Layout
 
@@ -8,6 +8,7 @@ This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, and `Ef
 - `stdlib/List.sproof`
 - `stdlib/Vec.sproof`
 - `stdlib/Bool.sproof`
+- `stdlib/Dictionary.sproof`
 - `stdlib/Effect.sproof`
 
 Each file is self-contained and checker-runnable by itself.

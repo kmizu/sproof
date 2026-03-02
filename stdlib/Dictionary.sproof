@@ -1,0 +1,111 @@
+// stdlib v1: Dictionary (Nat -> Nat, association list)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def eq_nat(a: Nat, b: Nat): Bool {
+  match a {
+    case Nat.zero =>
+      match b {
+        case Nat.zero    => Bool.true
+        case Nat.succ(m) => Bool.false
+      }
+    case Nat.succ(n) =>
+      match b {
+        case Nat.zero    => Bool.false
+        case Nat.succ(m) => eq_nat(n, m)
+      }
+  }
+}
+
+inductive MaybeNat {
+  case none: MaybeNat
+  case some(value: Nat): MaybeNat
+}
+
+inductive Dictionary {
+  case empty: Dictionary
+  case entry(key: Nat, value: Nat, tail: Dictionary): Dictionary
+}
+
+def insert(d: Dictionary, key: Nat, value: Nat): Dictionary =
+  Dictionary.entry(key, value, d)
+
+def lookup(d: Dictionary, key: Nat): MaybeNat {
+  match d {
+    case Dictionary.empty => MaybeNat.none
+    case Dictionary.entry(k, v, rest) =>
+      match eq_nat(k, key) {
+        case Bool.true  => MaybeNat.some(v)
+        case Bool.false => lookup(rest, key)
+      }
+  }
+}
+
+def member(d: Dictionary, key: Nat): Bool {
+  match lookup(d, key) {
+    case MaybeNat.none    => Bool.false
+    case MaybeNat.some(v) => Bool.true
+  }
+}
+
+def remove(d: Dictionary, key: Nat): Dictionary {
+  match d {
+    case Dictionary.empty => Dictionary.empty
+    case Dictionary.entry(k, v, rest) =>
+      match eq_nat(k, key) {
+        case Bool.true  => remove(rest, key)
+        case Bool.false => Dictionary.entry(k, v, remove(rest, key))
+      }
+  }
+}
+
+def size(d: Dictionary): Nat {
+  match d {
+    case Dictionary.empty             => Nat.zero
+    case Dictionary.entry(k, v, rest) => Nat.succ(size(rest))
+  }
+}
+
+defspec eq_nat_refl(n: Nat): eq_nat(n, n) = Bool.true {
+  by induction n {
+    case zero => trivial
+    case succ k ih => simplify [ih]
+  }
+}
+
+defspec lookup_empty(key: Nat): lookup(Dictionary.empty, key) = MaybeNat.none {
+  by trivial
+}
+
+defspec member_empty(key: Nat): member(Dictionary.empty, key) = Bool.false {
+  by trivial
+}
+
+defspec remove_empty(key: Nat): remove(Dictionary.empty, key) = Dictionary.empty {
+  by trivial
+}
+
+defspec size_empty(): size(Dictionary.empty) = Nat.zero {
+  by trivial
+}
+
+defspec size_insert(d: Dictionary, key: Nat, value: Nat): size(Dictionary.entry(key, value, d)) = Nat.succ(size(d)) {
+  by trivial
+}
+
+defspec lookup_insert_zero(d: Dictionary, value: Nat): lookup(Dictionary.entry(Nat.zero, value, d), Nat.zero) = MaybeNat.some(value) {
+  by trivial
+}
+
+defspec lookup_insert_one(d: Dictionary, value: Nat):
+  lookup(Dictionary.entry(Nat.succ(Nat.zero), value, d), Nat.succ(Nat.zero)) = MaybeNat.some(value) {
+  by trivial
+}

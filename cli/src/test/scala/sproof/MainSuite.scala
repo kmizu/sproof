@@ -231,6 +231,56 @@ class MainSuite extends FunSuite:
     assert(result.isRight, s"expected Right but got: $result")
   }
 
+  test("check: have tactic accepts equality propositions") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |defspec have_eq_test(n: Nat): n = n {
+         |  by have h : n = n = { by trivial }; trivial
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "have-eq-test")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
+  test("check: later defspec can reuse earlier defspec as theorem term") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |defspec eq1(n: Nat): n = n {
+         |  by trivial
+         |}
+         |defspec eq2(n: Nat): n = n {
+         |  by exact eq1(n)
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "defspec-reuse")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
+  test("check: defspec forward reference is rejected (source-order checking)") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |defspec eq2(n: Nat): n = n {
+         |  by exact eq1(n)
+         |}
+         |defspec eq1(n: Nat): n = n {
+         |  by trivial
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "defspec-forward-ref")
+    assert(result.isLeft, s"expected Left but got: $result")
+    val msg = result.left.toOption.get
+    assert(msg.contains("eq1") || msg.contains("Unknown variable"), s"unexpected error: $msg")
+  }
+
   // ---- rewrite tactic ----
 
   test("check: rewrite tactic rewrites goal using equality hypothesis") {

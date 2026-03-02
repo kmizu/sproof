@@ -11,6 +11,8 @@ case class ElabResult(
   defs:     Map[String, Term],
   /** (params: List[(name, type)], propTerm, proof) — params needed to build the proof context */
   defspecs: Map[String, (List[(String, Term)], Term, SProof)],
+  /** defspec declaration order (source order), used for proof checking dependencies. */
+  defspecOrder: List[String] = Nil,
   /** Surface expressions from `#check` declarations, in order of appearance. */
   checks:   List[SExpr] = Nil,
 )
@@ -38,6 +40,7 @@ object Elaborator:
     var env      = GlobalEnv.empty
     var defs     = Map.empty[String, Term]
     var defspecs = Map.empty[String, (List[(String, Term)], Term, SProof)]
+    var defspecOrder = List.empty[String]
     var checks   = List.empty[SExpr]
 
     for decl <- decls do
@@ -88,7 +91,9 @@ object Elaborator:
             case Right(elabParams) =>
               elabType(prop, env, nameEnv, typeAnns) match
                 case Left(err)    => return Left(err)
-                case Right(propT) => defspecs = defspecs + (name -> (elabParams, propT, proof))
+                case Right(propT) =>
+                  defspecs = defspecs + (name -> (elabParams, propT, proof))
+                  defspecOrder = defspecOrder :+ name
 
         case SDecl.SStructure(name, fields) =>
           if env.lookupInd(name).isDefined || env.lookupStruct(name).isDefined then
@@ -153,7 +158,7 @@ object Elaborator:
         case SDecl.SCheck(expr) =>
           checks = checks :+ expr
 
-    Right(ElabResult(env, defs, defspecs, checks))
+    Right(ElabResult(env, defs, defspecs, defspecOrder, checks))
 
   /** Public API: elaborate a surface type given a GlobalEnv and a Context.
     * Builds a nameEnv from the context entries.

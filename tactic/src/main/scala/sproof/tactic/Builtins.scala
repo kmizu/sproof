@@ -19,6 +19,15 @@ import sproof.tactic.SimpRewriteDb.RewriteDirection
  */
 object Builtins:
 
+  // Eq is a built-in inductive family handled specially in the kernel checker.
+  // Tactic-side case splitting still needs a constructor shape for subgoal generation.
+  private val eqIndDef: IndDef = IndDef(
+    name = "Eq",
+    params = Nil,
+    ctors = List(CtorDef("refl", List(Term.Meta(-1)))),
+    universe = 0,
+  )
+
   // ---- trivial / triv ----
 
   /** Close an equality goal `Eq T a b` when `a` and `b` are definitionally equal.
@@ -144,11 +153,7 @@ object Builtins:
       varIdxTpe    <- TacticM.liftEither(findVarByName(goal.ctx, varName))
       (varIdx, varTpe) = varIdxTpe
       indName      <- TacticM.liftEither(extractIndNameRaw(varTpe))
-      indDef       <- TacticM.liftEither(
-                        env.lookupInd(indName).toRight(
-                          TacticError.Custom(s"Unknown inductive type '$indName' in GlobalEnv")
-                        )
-                      )
+      indDef       <- TacticM.liftEither(resolveIndDef(indName))
       // Determine if any case requests IH (extraBindings > ctor arg count)
       needsIH       = caseSpecs.exists { case (ctorName, bindings) =>
                         indDef.ctors.find(_.name == ctorName)
@@ -611,11 +616,7 @@ object Builtins:
       varIdxTpe    <- TacticM.liftEither(findVarByName(goal.ctx, varName))
       (varIdx, varTpe) = varIdxTpe
       indName      <- TacticM.liftEither(extractIndNameRaw(varTpe))
-      indDef       <- TacticM.liftEither(
-                        env.lookupInd(indName).toRight(
-                          TacticError.Custom(s"Unknown inductive type '$indName' in GlobalEnv")
-                        )
-                      )
+      indDef       <- TacticM.liftEither(resolveIndDef(indName))
       _            <- plainInduction(mv, goal, varIdx, indDef)
     yield ()
 
@@ -699,9 +700,19 @@ object Builtins:
   /** Extract the inductive type name from a raw type term (no whnf). */
   private def extractIndNameRaw(t: Term): Either[TacticError, String] = t match
     case Term.Ind(name, _, _) => Right(name)
+    // Inductive families such as Eq are represented as applied inductives:
+    // Eq(A, lhs, rhs) = App(App(Ind("Eq"), lhs), rhs). Peel applications.
+    case Term.App(fn, _)       => extractIndNameRaw(fn)
     case _ => Left(TacticError.Custom(
       s"Expected inductive type for induction, got: ${t.show}"
     ))
+
+  private def resolveIndDef(indName: String)(using env: GlobalEnv): Either[TacticError, IndDef] =
+    env.lookupInd(indName) match
+      case Some(indDef) => Right(indDef)
+      case None if indName == "Eq" => Right(eqIndDef)
+      case None =>
+        Left(TacticError.Custom(s"Unknown inductive type '$indName' in GlobalEnv"))
 
   /** Transform goal.target into the induction motive body.
    *

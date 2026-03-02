@@ -14,6 +14,7 @@ class StdlibSuite extends FunSuite:
       "stdlib/List.sproof",
       "stdlib/Vec.sproof",
       "stdlib/Bool.sproof",
+      "stdlib/Dictionary.sproof",
       "stdlib/Effect.sproof",
     )
     files.foreach { file =>
@@ -28,6 +29,7 @@ class StdlibSuite extends FunSuite:
       ("stdlib/List.sproof", "examples/stdlib/list_usage.sproof"),
       ("stdlib/Vec.sproof", "examples/stdlib/vec_usage.sproof"),
       ("stdlib/Bool.sproof", "examples/stdlib/bool_usage.sproof"),
+      ("stdlib/Dictionary.sproof", "examples/stdlib/dictionary_usage.sproof"),
       ("stdlib/Effect.sproof", "examples/stdlib/effect_usage.sproof"),
     )
     pairs.foreach { (lib, usage) =>
@@ -42,4 +44,5 @@ class StdlibSuite extends FunSuite:
     assert(doc.contains("stdlib/List.sproof"))
     assert(doc.contains("stdlib/Vec.sproof"))
     assert(doc.contains("stdlib/Bool.sproof"))
+    assert(doc.contains("stdlib/Dictionary.sproof"))
     assert(doc.contains("stdlib/Effect.sproof"))

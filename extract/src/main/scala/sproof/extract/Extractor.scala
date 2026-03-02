@@ -42,7 +42,10 @@ object Extractor:
     val defParts = env.defs.values.toList
       .sortBy(_.name)
       .map(d => extractDef(d.name, d.tpe, d.body))
-    (indParts ++ defParts).mkString("\n\n")
+    val runtimeParts =
+      if hasDefaultIoShape(env) then List(extractIoRuntime)
+      else Nil
+    (indParts ++ defParts ++ runtimeParts).mkString("\n\n")
 
   /** Extract an inductive type definition to a Scala 3 `enum`.
    *
@@ -356,3 +359,75 @@ object Extractor:
     if s.isEmpty || s == "_" then "_"
     else s.filter(c => c.isLetterOrDigit || c == '_')
       .ensuring(_.nonEmpty, "_")
+
+  /** Detect the default IO script shape used by stdlib/Effect.sproof. */
+  private def hasDefaultIoShape(env: GlobalEnv): Boolean =
+    env.lookupInd("IO") match
+      case None => false
+      case Some(ioDef) =>
+        val names = ioDef.ctors.map(_.name).toSet
+        names == Set("pure", "read_int", "print_int", "bind")
+
+  /** Runtime interpreter for extracted IO scripts.
+   *
+   *  Kept outside the kernel and generated only when IO is present.
+   */
+  private def extractIoRuntime: String =
+    """|object IORuntime:
+       |  def run(script: IO): Int =
+       |    runWith(
+       |      script,
+       |      () =>
+       |        scala.io.StdIn.readLine() match
+       |          case null => 0
+       |          case s    => s.trim.toInt,
+       |      (value: Int) => println(value),
+       |    )
+       |
+       |  def runWith(
+       |    script:   IO,
+       |    readInt:  () => Int,
+       |    printInt: Int => Unit,
+       |  ): Int =
+       |    script match
+       |      case IO.Pure(value) =>
+       |        value
+       |      case IO.Read_int =>
+       |        readInt()
+       |      case IO.Print_int(value) =>
+       |        printInt(value)
+       |        value
+       |      case IO.Bind(action, k) =>
+       |        val result = runWith(action, readInt, printInt)
+       |        runWith(k(result), readInt, printInt)
+       |
+       |  final case class Trace(
+       |    result:          Int,
+       |    consumedInputs:  List[Int],
+       |    printedValues:   List[Int],
+       |    remainingInputs: List[Int],
+       |  )
+       |
+       |  def runWithTrace(script: IO, inputs: List[Int]): Trace =
+       |    def eval(
+       |      current:    IO,
+       |      remaining:  List[Int],
+       |      consumedRv: List[Int],
+       |      printedRv:  List[Int],
+       |    ): (Int, List[Int], List[Int], List[Int]) =
+       |      current match
+       |        case IO.Pure(value) =>
+       |          (value, remaining, consumedRv, printedRv)
+       |        case IO.Read_int =>
+       |          remaining match
+       |            case x :: rest => (x, rest, x :: consumedRv, printedRv)
+       |            case Nil       => (0, Nil, consumedRv, printedRv)
+       |        case IO.Print_int(value) =>
+       |          (value, remaining, consumedRv, value :: printedRv)
+       |        case IO.Bind(action, k) =>
+       |          val (v, rem1, con1, out1) = eval(action, remaining, consumedRv, printedRv)
+       |          eval(k(v), rem1, con1, out1)
+       |
+       |    val (result, remaining, consumedRv, printedRv) = eval(script, inputs, Nil, Nil)
+       |    Trace(result, consumedRv.reverse, printedRv.reverse, remaining)
+       |""".stripMargin

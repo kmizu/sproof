@@ -49,6 +49,9 @@ jobs:
       - name: Check int.sproof end-to-end
         run: sbt "cli/run check examples/int.sproof"
 
+      - name: Check Effect runtime extraction
+        run: ./scripts/check_effect_runtime.sh
+
   # ---- Benchmarks: median + threshold gate ----
   benchmarks:
     name: Benchmarks (median thresholds)

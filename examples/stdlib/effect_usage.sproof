@@ -1,0 +1,8 @@
+// Uses stdlib/Effect.sproof declarations directly (prepend stdlib source before this file)
+
+def sample_script(): IO =
+  io_then(io_print(Int.pos(Nat.zero)), io_pure(Int.zero))
+
+defspec sample_script_shape(): sample_script() = io_bind(io_print(Int.pos(Nat.zero)), fun (ignored: Int) => io_pure(Int.zero)) {
+  by trivial
+}

@@ -3,6 +3,7 @@ package sproof.tactic
 import sproof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, Param, Ctor}
 import sproof.checker.Bidirectional
 import sproof.eval.{Quote, Eval, Env, Semantic, Neutral}
+import sproof.tactic.SimpRewriteDb.RewriteDirection
 
 /** Built-in tactics for sproof.
  *
@@ -437,15 +438,37 @@ object Builtins:
   def simplify(lemmas: List[String] = Nil)(using env: GlobalEnv): TacticM[Unit] =
     lemmas match
       case Nil => trivial
-      case ihName :: _ =>
+      case _ =>
+        val orderedSpecs = SimpRewriteDb.orderSpecs(lemmas)
         for
           goalPair    <- TacticM.currentGoal
           (mv, goal)   = goalPair
-          result      <- simplifyWithIH(mv, goal, ihName)
+          result      <- trySimplifySpecs(mv, goal, orderedSpecs)
         yield result
 
+  private def trySimplifySpecs(
+    mv: MetaVar,
+    goal: Goal,
+    specs: List[SimpRewriteDb.RuleSpec],
+  )(using env: GlobalEnv): TacticM[Unit] =
+    specs match
+      case Nil => trivial
+      case spec :: rest =>
+        TacticM.get.flatMap { state =>
+          val (newState, result) =
+            TacticM.run(simplifyWithIH(mv, goal, spec.lemmaName, spec.direction), state)
+          result match
+            case Right(()) => TacticM.set(newState)
+            case Left(_)   => trySimplifySpecs(mv, goal, rest)
+        }
+
   /** Try to close the goal using the J-rule with hypothesis `ihName`. */
-  private def simplifyWithIH(mv: MetaVar, goal: Goal, ihName: String)(using env: GlobalEnv): TacticM[Unit] =
+  private def simplifyWithIH(
+    mv: MetaVar,
+    goal: Goal,
+    ihName: String,
+    direction: RewriteDirection = RewriteDirection.Forward,
+  )(using env: GlobalEnv): TacticM[Unit] =
     findVarByName(goal.ctx, ihName) match
       case Left(_) => trivial   // ih not found: fall back
       case Right((ihIdx, _)) =>
@@ -454,24 +477,37 @@ object Builtins:
         val ihTypeRaw = goal.ctx.entries(ihIdx).tpe
         Eq.extract(ihTypeRaw) match
           case None => trivial  // ih not an equality: fall back
-          case Some((_, lhsIh, rhsIh)) =>
+          case Some((eqTpe, lhsIh, rhsIh)) =>
             Eq.extract(goal.target) match
               case None => trivial  // goal not an equality: fall back
               case Some((_, lhsGoal, rhsGoal)) =>
                 // Normalise all sides for comparison and J-rule construction
                 val envForCtx  = buildEnvWithDefs(goal.ctx)
                 val n          = goal.ctx.size
+                val (orientedLhsIh, orientedRhsIh) = direction match
+                  case RewriteDirection.Forward  => (lhsIh, rhsIh)
+                  case RewriteDirection.Backward => (rhsIh, lhsIh)
                 val normLhs    = Quote.normalize(n, envForCtx, lhsGoal)
                 val normRhs    = Quote.normalize(n, envForCtx, rhsGoal)
-                val normLhsIh  = Quote.normalize(n, envForCtx, lhsIh)
-                val normRhsIh  = Quote.normalize(n, envForCtx, rhsIh)
+                val normLhsIh  = Quote.normalize(n, envForCtx, orientedLhsIh)
+                val normRhsIh  = Quote.normalize(n, envForCtx, orientedRhsIh)
                 // Fast path: goal LHS ≡ ih LHS and goal RHS ≡ ih RHS
                 // e.g. mult(succ_k, 0) normalises to mult(k,0), ih: mult(k,0)=0
                 if Quote.convEqual(n, envForCtx, normLhs, normLhsIh) &&
                    Quote.convEqual(n, envForCtx, normRhs, normRhsIh) then
-                  TacticM.solveGoalWith(mv, Term.Var(ihIdx))
+                  direction match
+                    case RewriteDirection.Forward =>
+                      TacticM.solveGoalWith(mv, Term.Var(ihIdx))
+                    case RewriteDirection.Backward =>
+                      TacticM.solveGoalWith(mv, symmetryProof(ihIdx, eqTpe, lhsIh))
                 else
-                  buildJRuleProof(mv, goal, ihIdx, lhsIh, normLhs, normRhs)
+                  direction match
+                    case RewriteDirection.Forward =>
+                      buildJRuleProof(mv, goal, ihIdx, lhsIh, normLhs, normRhs)
+                    case RewriteDirection.Backward =>
+                      // Backward J-rule is intentionally conservative in Phase 1:
+                      // direct symmetry is supported; complex congruence falls back.
+                      trivial
 
   /** Build a J-rule proof for goal `Eq(normLhs, normRhs)` given `ih` at `ihIdx`.
    *
@@ -508,6 +544,14 @@ object Builtins:
       case _ =>
         // Pattern not recognised: try trivial as fallback
         trivial
+
+  private def symmetryProof(ihIdx: Int, eqTpe: Term, lhs: Term): Term =
+    val eqTpeInLam = Subst.shift(1, eqTpe)
+    val lhsInLam   = Subst.shift(1, lhs)
+    val motiveBody = Eq.mkType(eqTpeInLam, Term.Var(0), lhsInLam)
+    val motive     = Term.Lam("x", eqTpeInLam, motiveBody)
+    val branch     = Eq.mkRefl(lhsInLam)
+    Term.Mat(Term.Var(ihIdx), List(MatchCase("refl", 1, branch)), motive)
 
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)
@@ -584,21 +628,38 @@ object Builtins:
     * Otherwise, use J-rule substitution via simplify infrastructure.
     */
   def rewrite(lemmas: List[String])(using env: GlobalEnv): TacticM[Unit] =
-    lemmas match
+    val orderedSpecs = SimpRewriteDb.orderSpecs(lemmas)
+    orderedSpecs match
       case Nil => trivial
-      case lemmaName :: rest =>
+      case _ =>
         for
           goalPair   <- TacticM.currentGoal
           (mv, goal)  = goalPair
-          _          <- rewriteWithLemma(mv, goal, lemmaName)
-          _          <- if rest.nonEmpty then rewrite(rest) else TacticM.pure(())
+          _          <- rewriteWithSpecs(mv, goal, orderedSpecs)
         yield ()
+
+  private def rewriteWithSpecs(
+    mv: MetaVar,
+    goal: Goal,
+    specs: List[SimpRewriteDb.RuleSpec],
+  )(using env: GlobalEnv): TacticM[Unit] =
+    specs match
+      case Nil => TacticM.fail(TacticError.Custom("rewrite: all rewrite rules failed"))
+      case spec :: rest =>
+        TacticM.get.flatMap { state =>
+          val (newState, result) =
+            TacticM.run(rewriteWithLemma(mv, goal, spec.lemmaName, spec.direction), state)
+          result match
+            case Right(()) => TacticM.set(newState)
+            case Left(_)   => rewriteWithSpecs(mv, goal, rest)
+        }
 
   /** Rewrite goal using a single lemma. */
   private def rewriteWithLemma(
     mv:        MetaVar,
     goal:      Goal,
     lemmaName: String,
+    direction: RewriteDirection = RewriteDirection.Forward,
   )(using env: GlobalEnv): TacticM[Unit] =
     findVarByName(goal.ctx, lemmaName) match
       case Left(err) =>
@@ -608,14 +669,22 @@ object Builtins:
         Eq.extract(ihType) match
           case None =>
             TacticM.fail(TacticError.Custom(s"rewrite: $lemmaName is not an equality"))
-          case Some((_, lhsIh, rhsIh)) =>
+          case Some((eqTpe, lhsIh, rhsIh)) =>
             // Check if the goal exactly matches the hypothesis type
-            if Quote.convEqual(goal.ctx.size, envForCtx, goal.target, ihType) then
-              // Goal is exactly the same equality — just use the hypothesis directly
-              TacticM.solveGoalWith(mv, Term.Var(ihIdx))
-            else
-              // Try J-rule approach through simplify
-              simplifyWithIH(mv, goal, lemmaName)
+            direction match
+              case RewriteDirection.Forward =>
+                if Quote.convEqual(goal.ctx.size, envForCtx, goal.target, ihType) then
+                  // Goal is exactly the same equality — just use the hypothesis directly
+                  TacticM.solveGoalWith(mv, Term.Var(ihIdx))
+                else
+                  // Try J-rule approach through simplify
+                  simplifyWithIH(mv, goal, lemmaName, direction)
+              case RewriteDirection.Backward =>
+                val reversedIhType = Eq.mkType(eqTpe, rhsIh, lhsIh)
+                if Quote.convEqual(goal.ctx.size, envForCtx, goal.target, reversedIhType) then
+                  TacticM.solveGoalWith(mv, symmetryProof(ihIdx, eqTpe, lhsIh))
+                else
+                  simplifyWithIH(mv, goal, lemmaName, direction)
 
   // ---- helpers ----
 

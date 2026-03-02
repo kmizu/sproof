@@ -14,13 +14,32 @@ import sproof.extract.Extractor
   */
 object Main:
 
+  private[sproof] final case class CheckCliOptions(
+    filePath: String,
+    json: Boolean,
+    failOnSorry: Boolean,
+  )
+
+  private[sproof] final case class SorryDiagnostic(
+    code: String,
+    defspec: String,
+    transitive: Boolean,
+    occurrences: Option[Int],
+    dependsOn: List[String],
+    message: String,
+  )
+
   def main(args: Array[String]): Unit =
     args.toList match
-      case "check" :: filePath :: Nil =>
-        runCheck(filePath)
-
-      case "check" :: "--json" :: filePath :: Nil =>
-        runCheckJson(filePath)
+      case "check" :: tail =>
+        parseCheckOptions(tail) match
+          case Left(err) =>
+            System.err.println(s"Error: $err")
+            printUsage()
+            sys.exit(1)
+          case Right(opts) =>
+            if opts.json then runCheckJson(opts.filePath, opts.failOnSorry)
+            else runCheck(opts.filePath, opts.failOnSorry)
 
       case "agent" :: filePath :: Nil =>
         runAgent(filePath)
@@ -35,6 +54,30 @@ object Main:
       case _ =>
         printUsage()
         sys.exit(1)
+
+  private[sproof] def parseCheckOptions(args: List[String]): Either[String, CheckCliOptions] =
+    def loop(
+      rest: List[String],
+      json: Boolean,
+      failOnSorry: Boolean,
+      file: Option[String],
+    ): Either[String, CheckCliOptions] =
+      rest match
+        case Nil =>
+          file match
+            case Some(path) => Right(CheckCliOptions(path, json, failOnSorry))
+            case None       => Left("Missing <file.sproof> for check")
+        case "--json" :: tail =>
+          loop(tail, json = true, failOnSorry, file)
+        case "--fail-on-sorry" :: tail =>
+          loop(tail, json, failOnSorry = true, file)
+        case opt :: _ if opt.startsWith("--") =>
+          Left(s"Unknown option for check: $opt")
+        case path :: tail =>
+          file match
+            case Some(_) => Left("Too many file arguments for check")
+            case None    => loop(tail, json, failOnSorry, Some(path))
+    loop(args, json = false, failOnSorry = false, file = None)
 
   // ---- Agent command ----
 
@@ -79,7 +122,7 @@ object Main:
 
   // ---- Check --json command ----
 
-  private def runCheckJson(filePath: String): Unit =
+  private def runCheckJson(filePath: String, failOnSorry: Boolean): Unit =
     val source =
       try Source.fromFile(filePath).mkString
       catch
@@ -89,7 +132,10 @@ object Main:
         case e: Exception =>
           println(s"""{"ok":false,"error":"${e.getMessage}","phase":"io"}""")
           sys.exit(1)
-    println(processSourceJson(source, filePath))
+    val json = processSourceJson(source, filePath, failOnSorry = failOnSorry)
+    println(json)
+    if failOnSorry && json.contains("\"phase\":\"policy\"") then
+      sys.exit(1)
 
   // ---- Extract command ----
 
@@ -113,7 +159,7 @@ object Main:
 
   // ---- Check command ----
 
-  private def runCheck(filePath: String): Unit =
+  private def runCheck(filePath: String, failOnSorry: Boolean): Unit =
     val source =
       try Source.fromFile(filePath).mkString
       catch
@@ -124,11 +170,15 @@ object Main:
           System.err.println(s"Error reading file: ${e.getMessage}")
           sys.exit(1)
 
-    processSource(source, filePath) match
+    processSourceWithWarnings(source, filePath) match
       case Left(err) =>
         System.err.println(s"Error: $err")
         sys.exit(1)
-      case Right((env, specCount)) =>
+      case Right((env, specCount, warnings)) =>
+        warnings.foreach(w => System.err.println(w))
+        if failOnSorry && warnings.nonEmpty then
+          System.err.println("Error: sorry policy violation (use of sorry is disallowed in this mode)")
+          sys.exit(1)
         val indCount  = env.inductives.size
         val defCount  = env.defs.size
         println(s"OK: $filePath — $indCount inductive(s), $defCount definition(s), $specCount defspec(s)")
@@ -195,9 +245,20 @@ object Main:
     *   success: {"ok":true,"inductives":N,"defs":N,"defspecs":N}
     *   failure: {"ok":false,"error":"...","phase":"parse|elab|proof"}
     */
-  def processSourceJson(source: String, fileName: String = "<input>"): String =
+  def processSourceJson(
+    source: String,
+    fileName: String = "<input>",
+    failOnSorry: Boolean = false,
+  ): String =
     def esc(s: String): String =
       s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+
+    def toJsonDiagnostic(d: SorryDiagnostic): String =
+      val occJson = d.occurrences match
+        case Some(n) => n.toString
+        case None    => "null"
+      val depsJson = d.dependsOn.map(dep => s""""${esc(dep)}"""").mkString("[", ",", "]")
+      s"""{"code":"${esc(d.code)}","defspec":"${esc(d.defspec)}","transitive":${d.transitive},"occurrences":$occJson,"dependsOn":$depsJson,"message":"${esc(d.message)}"}"""
 
     Parser.parseProgram(source) match
       case Left(parseErr) =>
@@ -216,7 +277,12 @@ object Main:
                 val defCount  = env.defs.size
                 val specCount = result.defspecs.size
                 val warnJson  = warnings.map(w => s""""${esc(w)}"""").mkString("[", ",", "]")
-                s"""{"ok":true,"inductives":$indCount,"defs":$defCount,"defspecs":$specCount,"warnings":$warnJson}"""
+                val sorryDiagnostics = warnings.map(parseSorryDiagnostic)
+                val diagJson = sorryDiagnostics.map(toJsonDiagnostic).mkString("[", ",", "]")
+                if failOnSorry && warnings.nonEmpty then
+                  s"""{"ok":false,"error":"sorry policy violation (use of sorry is disallowed in this mode)","phase":"policy","warnings":$warnJson,"sorryDiagnostics":$diagJson}"""
+                else
+                  s"""{"ok":true,"inductives":$indCount,"defs":$defCount,"defspecs":$specCount,"warnings":$warnJson,"sorryDiagnostics":$diagJson}"""
 
   // ---- REPL ----
 
@@ -328,12 +394,50 @@ object Main:
   private def printUsage(): Unit =
     println(
       """|Usage:
-         |  sproof check <file.sproof>          Parse, elaborate, and verify a sproof file.
-         |  sproof check --json <file.sproof>   Same, but output JSON (for tooling/agents).
+         |  sproof check <file.sproof>                          Parse, elaborate, and verify a sproof file.
+         |  sproof check --json <file.sproof>                   Same, but output JSON (for tooling/agents).
+         |  sproof check --fail-on-sorry <file.sproof>          Treat any sorry warning as an error (exit 1).
+         |  sproof check --json --fail-on-sorry <file.sproof>   JSON output + fail policy.
          |  sproof extract <file.sproof>        Extract Scala 3 code from a verified sproof file.
          |  sproof agent <file.sproof>          Auto-repair sorry proofs using the proof agent.
          |  sproof repl                         Start the interactive REPL.
          |""".stripMargin
     )
+
+  private val directSorryPattern =
+    """warning: '([^']+)' uses sorry \((\d+) occurrence\(s\)\) — proof is unsound""".r
+  private val transitiveSorryPattern =
+    """warning: '([^']+)' depends on sorry-tainted defspec\(s\): (.+) — proof is transitively unsound""".r
+
+  private[sproof] def parseSorryDiagnostic(warning: String): SorryDiagnostic =
+    warning match
+      case directSorryPattern(name, count) =>
+        SorryDiagnostic(
+          code = "sorry.direct",
+          defspec = name,
+          transitive = false,
+          occurrences = Some(count.toInt),
+          dependsOn = Nil,
+          message = warning,
+        )
+      case transitiveSorryPattern(name, depsRaw) =>
+        val deps = depsRaw.split(",").map(_.trim).filter(_.nonEmpty).toList
+        SorryDiagnostic(
+          code = "sorry.transitive",
+          defspec = name,
+          transitive = true,
+          occurrences = None,
+          dependsOn = deps,
+          message = warning,
+        )
+      case _ =>
+        SorryDiagnostic(
+          code = "sorry.unknown",
+          defspec = "<unknown>",
+          transitive = true,
+          occurrences = None,
+          dependsOn = Nil,
+          message = warning,
+        )
 
 end Main

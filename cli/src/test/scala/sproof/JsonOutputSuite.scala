@@ -66,4 +66,27 @@ class JsonOutputSuite extends FunSuite:
     assert(json.contains("proof-state"), s"error should contain proof-state:\n$json")
   }
 
+  test("processSourceJson: includes machine-readable sorry diagnostics") {
+    val source =
+      """|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+         |defspec unfinished(n: Nat): n = n { by sorry }
+         |""".stripMargin
+    val json = Main.processSourceJson(source, "sorry.sproof")
+    assert(json.contains("\"ok\":true"), s"warning mode should still succeed:\n$json")
+    assert(json.contains("\"warnings\""), s"should include warnings:\n$json")
+    assert(json.contains("\"sorryDiagnostics\""), s"should include sorryDiagnostics:\n$json")
+    assert(json.contains("\"code\":\"sorry.direct\""), s"should classify direct sorry:\n$json")
+  }
+
+  test("processSourceJson: fail-on-sorry returns policy error") {
+    val source =
+      """|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+         |defspec unfinished(n: Nat): n = n { by sorry }
+         |""".stripMargin
+    val json = Main.processSourceJson(source, "sorry.sproof", failOnSorry = true)
+    assert(json.contains("\"ok\":false"), s"fail mode must fail:\n$json")
+    assert(json.contains("\"phase\":\"policy\""), s"phase should be policy:\n$json")
+    assert(json.contains("\"sorryDiagnostics\""), s"policy error should retain diagnostics:\n$json")
+  }
+
 end JsonOutputSuite

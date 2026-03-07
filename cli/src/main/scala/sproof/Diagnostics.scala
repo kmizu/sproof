@@ -7,13 +7,17 @@ final case class DiagnosticRange(start: DiagnosticPosition, end: DiagnosticPosit
 
 /** Structured diagnostic payload shared by CLI text and JSON output. */
 final case class Diagnostic(
-  phase:    String,
-  code:     String,
-  message:  String,
-  range:    Option[DiagnosticRange] = None,
-  expected: Option[String] = None,
-  actual:   Option[String] = None,
-  hint:     Option[String] = None,
+  phase:            String,
+  code:             String,
+  message:          String,
+  range:            Option[DiagnosticRange]  = None,
+  expected:         Option[String]           = None,
+  actual:           Option[String]           = None,
+  hint:             Option[String]           = None,
+  /** Human-readable rendering of the failing goal (e.g. "plus(n, zero) = n"). */
+  goalTarget:       Option[String]           = None,
+  /** Ordered list of tactics most likely to close the goal, from most to least likely. */
+  tacticSuggestions: Option[List[String]]   = None,
 )
 
 object Diagnostics:
@@ -50,6 +54,8 @@ object Diagnostics:
           case "unknown_type" => "Unknown type"
           case "proof_error" => "Proof error"
           case _ => firstLine(error)
+        val goalTarget = extractGoalTarget(error)
+        val suggestions = suggestTactics(code, error, goalTarget)
         Diagnostic(
           phase = phase,
           code = code,
@@ -58,6 +64,8 @@ object Diagnostics:
           expected = expected,
           actual = actual,
           hint = hintFor(code, expected, actual),
+          goalTarget = goalTarget,
+          tacticSuggestions = suggestions,
         )
 
   private def parseDiagnostic(error: String): Diagnostic =
@@ -189,4 +197,33 @@ object Diagnostics:
         col += 1
       i += 1
     DiagnosticPosition(line, col)
+
+  /** Extract a human-readable goal target from a proof error message.
+   *
+   *  Handles "trivial: not definitionally equal: LHS ≢ RHS" pattern.
+   */
+  private def extractGoalTarget(error: String): Option[String] =
+    raw"not definitionally equal:\s*(.+?)\s*≢\s*(.+?)(?:\s*\n|$$)".r
+      .findFirstMatchIn(error)
+      .map(m => s"${m.group(1).trim} = ${m.group(2).trim}")
+
+  /** Suggest tactics based on the error code and message content. */
+  private def suggestTactics(
+    code: String, error: String, goalTarget: Option[String],
+  ): Option[List[String]] =
+    if code != "proof_error" then None
+    else
+      val lowered = error.toLowerCase
+      val suggestions =
+        if lowered.contains("not definitionally equal") then
+          // Eq goal where sides differ: induction is most likely needed
+          List("induction", "simplify [ih]", "assumption", "sorry")
+        else if lowered.contains("not an equality") then
+          // Goal is not Eq: likely a Pi, introduce the binder
+          List("assume", "sorry")
+        else if lowered.contains("not found in context") then
+          List("assumption", "sorry")
+        else
+          List("trivial", "simplify", "induction", "sorry")
+      Some(suggestions)
 

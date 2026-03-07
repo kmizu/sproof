@@ -61,11 +61,28 @@ Failure responses include at least one diagnostic:
 
 ```json
 {
-  "severity": "error",
   "phase": "proof",
-  "message": "Proof of 'bad' failed: ..."
+  "code": "proof_error",
+  "message": "Proof error",
+  "range": {"start": {"line": 3, "column": 1}, "end": {"line": 3, "column": 30}},
+  "expected": null,
+  "actual": null,
+  "hint": "Inspect proof-state and apply a tactic that matches the current goal.",
+  "goalTarget": "plus(n, zero) = n",
+  "tacticSuggestions": ["induction", "simplify [ih]", "assumption", "sorry"]
 }
 ```
+
+Fields:
+
+- `phase`: `"parse" | "elab" | "proof"` — where the error occurred
+- `code`: `"parse_error" | "type_mismatch" | "unknown_variable" | "unknown_type" | "proof_error" | "error"`
+- `message`: short human-readable summary
+- `range`: source location (`null` if unavailable)
+- `expected` / `actual`: type mismatch details (`null` if not applicable)
+- `hint`: actionable advice (`null` if not applicable)
+- `goalTarget`: human-readable rendering of the failing goal (e.g. `"plus(n, zero) = n"`); `null` for non-proof errors or when not extractable
+- `tacticSuggestions`: ordered list of tactics most likely to close the goal; `null` for non-proof errors
 
 ## `checks[]`
 

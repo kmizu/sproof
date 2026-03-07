@@ -387,10 +387,14 @@ object Main:
         case Some(r) =>
           s"""{"start":{"line":${r.start.line},"column":${r.start.column}},"end":{"line":${r.end.line},"column":${r.end.column}}}"""
         case None => "null"
-      val expectedJson = d.expected.map(v => s""""${esc(v)}"""").getOrElse("null")
-      val actualJson = d.actual.map(v => s""""${esc(v)}"""").getOrElse("null")
-      val hintJson = d.hint.map(v => s""""${esc(v)}"""").getOrElse("null")
-      s"""{"phase":"${esc(d.phase)}","code":"${esc(d.code)}","message":"${esc(d.message)}","range":$rangeJson,"expected":$expectedJson,"actual":$actualJson,"hint":$hintJson}"""
+      val expectedJson       = d.expected.map(v => s""""${esc(v)}"""").getOrElse("null")
+      val actualJson         = d.actual.map(v => s""""${esc(v)}"""").getOrElse("null")
+      val hintJson           = d.hint.map(v => s""""${esc(v)}"""").getOrElse("null")
+      val goalTargetJson     = d.goalTarget.map(v => s""""${esc(v)}"""").getOrElse("null")
+      val tacticSuggestJson  = d.tacticSuggestions match
+        case Some(ts) => ts.map(t => s""""${esc(t)}"""").mkString("[", ",", "]")
+        case None     => "null"
+      s"""{"phase":"${esc(d.phase)}","code":"${esc(d.code)}","message":"${esc(d.message)}","range":$rangeJson,"expected":$expectedJson,"actual":$actualJson,"hint":$hintJson,"goalTarget":$goalTargetJson,"tacticSuggestions":$tacticSuggestJson}"""
 
     def failJson(phase: String, message: String, diagnostics: List[Diagnostic]): String =
       val diagJson = diagnostics.map(diagnosticToJson).mkString("[", ",", "]")

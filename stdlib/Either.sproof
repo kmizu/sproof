@@ -1,0 +1,91 @@
+// stdlib v1: Either (Nat-valued)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+inductive Either {
+  case left(value: Nat): Either
+  case right(value: Nat): Either
+}
+
+def map_either(e: Either, f: Nat -> Nat): Either {
+  match e {
+    case Either.left(v)  => Either.left(v)
+    case Either.right(v) => Either.right(f(v))
+  }
+}
+
+def is_left(e: Either): Bool {
+  match e {
+    case Either.left(v)  => Bool.true
+    case Either.right(v) => Bool.false
+  }
+}
+
+def is_right(e: Either): Bool {
+  match e {
+    case Either.left(v)  => Bool.false
+    case Either.right(v) => Bool.true
+  }
+}
+
+def get_left(e: Either, default: Nat): Nat {
+  match e {
+    case Either.left(v)  => v
+    case Either.right(v) => default
+  }
+}
+
+def get_right(e: Either, default: Nat): Nat {
+  match e {
+    case Either.left(v)  => default
+    case Either.right(v) => v
+  }
+}
+
+// map_either on left is identity (left is the error side, not mapped)
+defspec map_either_left(v: Nat, f: Nat -> Nat): map_either(Either.left(v), f) = Either.left(v) {
+  by trivial
+}
+
+// map_either on right applies f
+defspec map_either_right(v: Nat, f: Nat -> Nat): map_either(Either.right(v), f) = Either.right(f(v)) {
+  by trivial
+}
+
+// is_left on left = true
+defspec is_left_left(v: Nat): is_left(Either.left(v)) = Bool.true {
+  by trivial
+}
+
+// is_left on right = false
+defspec is_left_right(v: Nat): is_left(Either.right(v)) = Bool.false {
+  by trivial
+}
+
+// is_right on right = true
+defspec is_right_right(v: Nat): is_right(Either.right(v)) = Bool.true {
+  by trivial
+}
+
+// is_right on left = false
+defspec is_right_left(v: Nat): is_right(Either.left(v)) = Bool.false {
+  by trivial
+}
+
+// get_right on right value
+defspec get_right_right(v: Nat, d: Nat): get_right(Either.right(v), d) = v {
+  by trivial
+}
+
+// get_left on left value
+defspec get_left_left(v: Nat, d: Nat): get_left(Either.left(v), d) = v {
+  by trivial
+}

@@ -1,0 +1,10 @@
+// Uses stdlib/Pair.sproof declarations directly (prepend stdlib source before this file)
+
+// Projections recover the components
+defspec fst_use(a: Nat, b: Nat): fst(Pair.mk(a, b)) = a {
+  by trivial
+}
+
+defspec snd_use(a: Nat, b: Nat): snd(Pair.mk(a, b)) = b {
+  by trivial
+}

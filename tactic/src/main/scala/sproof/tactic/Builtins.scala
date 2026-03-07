@@ -1,6 +1,6 @@
 package sproof.tactic
 
-import sproof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, Param, Ctor}
+import sproof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, Param, Ctor, DefEntry}
 import sproof.checker.Bidirectional
 import sproof.eval.{Quote, Eval, Env, Semantic, Neutral}
 import sproof.tactic.SimpRewriteDb.RewriteDirection
@@ -431,24 +431,27 @@ object Builtins:
 
   /** Simplify the current goal, optionally using named equality hypotheses as rewrite rules.
    *
-   *  `simplify []` / `simplify` — delegates to `trivial` (NbE definitional equality).
+   *  `simplify []` / `simplify` — when `@[simp]` lemmas are in scope uses those; otherwise
+   *    delegates to `trivial` (NbE definitional equality).
    *
    *  `simplify [ih]` where `ih : lhs = rhs` — applies the J-rule (congruence):
    *    given goal `Eq(f(lhs), f(rhs))`, constructs the J-rule proof term:
    *    `Mat(ih, [refl(x) => refl(f(lhs_shifted))], P)` where `P(x) = Eq(f(lhs), f(x))`.
    *    Currently handles single-constructor-application wrappers, e.g. `succ(lhs) = succ(rhs)`.
+   *    Also handles global defspecs that are not in the local context (e.g. @[simp] lemmas).
    *
    *  Falls back to `trivial` if the pattern is not recognised.
    */
   def simplify(lemmas: List[String] = Nil)(using env: GlobalEnv): TacticM[Unit] =
-    lemmas match
+    val effectiveLemmas = if lemmas.isEmpty then env.simpSet.toList else lemmas
+    effectiveLemmas match
       case Nil => trivial
       case _ =>
-        val orderedSpecs = SimpRewriteDb.orderSpecs(lemmas)
+        val orderedSpecs = SimpRewriteDb.orderSpecs(effectiveLemmas)
         for
-          goalPair    <- TacticM.currentGoal
-          (mv, goal)   = goalPair
-          result      <- trySimplifySpecs(mv, goal, orderedSpecs)
+          goalPair  <- TacticM.currentGoal
+          (mv, goal) = goalPair
+          result    <- trySimplifySpecs(mv, goal, orderedSpecs)
         yield result
 
   private def trySimplifySpecs(
@@ -475,7 +478,7 @@ object Builtins:
     direction: RewriteDirection = RewriteDirection.Forward,
   )(using env: GlobalEnv): TacticM[Unit] =
     findVarByName(goal.ctx, ihName) match
-      case Left(_) => trivial   // ih not found: fall back
+      case Left(_) => tryGlobalLemmaAsIH(mv, goal, ihName, direction)  // not in ctx: try global env
       case Right((ihIdx, _)) =>
         // Use the raw stored type (not the over-shifted version from findVarByName)
         // because buildFixCase stores ih.tpe already shifted for the extended context.
@@ -516,38 +519,58 @@ object Builtins:
 
   /** Build a J-rule proof for goal `Eq(normLhs, normRhs)` given `ih` at `ihIdx`.
    *
-   *  Pattern: normLhs = Con(name, ref, [l]) and normRhs = Con(name, ref, [r]).
-   *  Motive: P(x) = Eq(Con(name, ref, [shift(1, l)]), Con(name, ref, [Var(0)])).
-   *  Proof: Mat(Var(ihIdx), [MatchCase("refl", 1, refl(Con(name,[shift(1,l)])))], P).
+   *  Handles any-arity Con where exactly one argument position differs:
+   *    normLhs = Con(name, ref, [a0, ..., l, ..., an])
+   *    normRhs = Con(name, ref, [a0, ..., r, ..., an])
+   *  where position k has l ≠ r (all others definitionally equal).
+   *
+   *  Motive: P(x) = Eq(Con(name, args_l_shifted), Con(name, args_r_with_x_at_k)).
+   *  Proof: Mat(Var(ihIdx), [MatchCase("refl", 1, refl(Con(name, args_l_shifted)))], P).
    */
   private def buildJRuleProof(
-    mv:     MetaVar,
-    goal:   Goal,
-    ihIdx:  Int,
+    mv:      MetaVar,
+    goal:    Goal,
+    ihIdx:   Int,
     lhsIh:  Term,
     normLhs: Term,
     normRhs: Term,
   )(using env: GlobalEnv): TacticM[Unit] =
     (normLhs, normRhs) match
-      case (Term.Con(lname, lref, List(l)), Term.Con(rname, rref, List(r)))
-           if lname == rname && lref == rref =>
-        // Motive: P(x) = Eq(Con(name,[shift(1,l)]), Con(name,[Var(0)]))
-        val lhsInLam  = Subst.shift(1, l)
-        val motiveBody = Term.App(
-          Term.App(Term.Ind("Eq", Nil, Nil),
-            Term.Con(lname, lref, List(lhsInLam))),
-          Term.Con(rname, rref, List(Term.Var(0))))
-        val motiveFunc = Term.Lam("x", Term.Ind(lref, Nil, Nil), motiveBody)
-        // Branch body: refl(Con(name, [shift(1, l)]))
-        val body      = Term.Con("refl", "Eq", List(Term.Con(lname, lref, List(lhsInLam))))
-        // J-rule proof: Mat(ih, [refl case], motive)
-        val proofTerm = Term.Mat(
-          Term.Var(ihIdx),
-          List(MatchCase("refl", 1, body)),
-          motiveFunc)
-        TacticM.solveGoalWith(mv, proofTerm)
+      case (Term.Con(lname, lref, largs), Term.Con(rname, rref, rargs))
+           if lname == rname && lref == rref && largs.length == rargs.length && largs.nonEmpty =>
+        val n         = goal.ctx.size
+        val envForCtx = buildEnvWithDefs(goal.ctx)
+        // Find the unique argument position where largs and rargs differ.
+        val diffPositions = largs.zip(rargs).zipWithIndex.collect {
+          case ((la, ra), k) if !Quote.convEqual(n, envForCtx, la, ra) => k
+        }
+        diffPositions match
+          case List(k) =>
+            // Shift all lhs args by 1 for use inside the motive lambda binder.
+            val shiftedLArgs = largs.map(Subst.shift(1, _))
+            // rhs args: position k becomes Var(0); all others shifted by 1.
+            val motiveRArgs  = rargs.zipWithIndex.map { (a, i) =>
+              if i == k then Term.Var(0) else Subst.shift(1, a)
+            }
+            val motiveBody = Term.App(
+              Term.App(Term.Ind("Eq", Nil, Nil),
+                Term.Con(lname, lref, shiftedLArgs)),
+              Term.Con(rname, rref, motiveRArgs))
+            // Use the inductive ref as the motive binder type (works for recursive positions
+            // like the tail of cons or the predecessor of succ — the common inductive proof case).
+            val motiveFunc = Term.Lam("x", Term.Ind(lref, Nil, Nil), motiveBody)
+            // Branch body: refl of the fully-shifted LHS constructor.
+            val body      = Term.Con("refl", "Eq", List(Term.Con(lname, lref, shiftedLArgs)))
+            val proofTerm = Term.Mat(
+              Term.Var(ihIdx),
+              List(MatchCase("refl", 1, body)),
+              motiveFunc)
+            TacticM.solveGoalWith(mv, proofTerm)
+          case _ =>
+            // Zero or multiple varying positions: cannot construct J-rule; fall back.
+            trivial
       case _ =>
-        // Pattern not recognised: try trivial as fallback
+        // Pattern not recognised: try trivial as fallback.
         trivial
 
   private def symmetryProof(ihIdx: Int, eqTpe: Term, lhs: Term): Term =
@@ -557,6 +580,89 @@ object Builtins:
     val motive     = Term.Lam("x", eqTpeInLam, motiveBody)
     val branch     = Eq.mkRefl(lhsInLam)
     Term.Mat(Term.Var(ihIdx), List(MatchCase("refl", 1, branch)), motive)
+
+  /** Apply a global defspec as a rewrite lemma when it is not in the local context.
+   *
+   *  Looks up `lemmaName` in `env.defs`, peels its Pi binders, finds matching context
+   *  variables for each parameter (greedy: first match by definitional equality), and
+   *  checks whether the instantiated proposition equals the current goal.
+   *  Handles only non-dependent parameter types (the common case for stdlib lemmas).
+   */
+  private def tryGlobalLemmaAsIH(
+    mv:        MetaVar,
+    goal:      Goal,
+    lemmaName: String,
+    direction: RewriteDirection = RewriteDirection.Forward,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    env.lookupDef(lemmaName).fold(trivial) { defEntry =>
+      instantiateGlobalLemma(defEntry, goal) match
+        case None => trivial
+        case Some((proofTerm, propTerm)) =>
+          Eq.extract(propTerm) match
+            case None => trivial
+            case Some((_, lhsLemma, rhsLemma)) =>
+              Eq.extract(goal.target) match
+                case None => trivial
+                case Some((_, lhsGoal, rhsGoal)) =>
+                  val n      = goal.ctx.size
+                  val envCtx = buildEnvWithDefs(goal.ctx)
+                  val (orientedLhs, orientedRhs) = direction match
+                    case RewriteDirection.Forward  => (lhsLemma, rhsLemma)
+                    case RewriteDirection.Backward => (rhsLemma, lhsLemma)
+                  val normGoalLhs = Quote.normalize(n, envCtx, lhsGoal)
+                  val normGoalRhs = Quote.normalize(n, envCtx, rhsGoal)
+                  val normLemLhs  = Quote.normalize(n, envCtx, orientedLhs)
+                  val normLemRhs  = Quote.normalize(n, envCtx, orientedRhs)
+                  if Quote.convEqual(n, envCtx, normGoalLhs, normLemLhs) &&
+                     Quote.convEqual(n, envCtx, normGoalRhs, normLemRhs) then
+                    TacticM.solveGoalWith(mv, proofTerm)
+                  else
+                    trivial
+    }
+
+  /** Instantiate a global defspec body by matching its Pi binders against context variables.
+   *
+   *  Returns `(proofTerm, propTerm)` where proofTerm is `App(...body..., args...)` and
+   *  propTerm is the Eq proposition with all Pi binders replaced by the chosen args.
+   *
+   *  Substitution order: innermost binder first (args.reverse) so De Bruijn indices
+   *  decrement correctly at each step.  Only non-dependent arg types are supported.
+   */
+  private def instantiateGlobalLemma(
+    defEntry: DefEntry,
+    goal:     Goal,
+  )(using env: GlobalEnv): Option[(Term, Term)] =
+    def peelPis(t: Term, acc: List[Term]): (List[Term], Term) = t match
+      case Term.Pi(_, argType, body) => peelPis(body, argType :: acc)
+      case other                     => (acc.reverse, other)
+    val (argTypes, coreProp) = peelPis(defEntry.tpe, Nil)
+    if argTypes.isEmpty then
+      Some((defEntry.body, defEntry.tpe))
+    else
+      val n      = goal.ctx.size
+      val envCtx = buildEnvWithDefs(goal.ctx)
+      // For each Pi arg type, find the first context variable matching by definitional equality.
+      val candidatesOpt: Option[List[Term]] =
+        argTypes.foldLeft(Option(List.empty[Term])) { (accOpt, argType) =>
+          accOpt.flatMap { acc =>
+            goal.ctx.entries.zipWithIndex.collectFirst {
+              case (entry, idx)
+                  if Quote.convEqual(
+                    n, envCtx,
+                    Quote.normalize(n, envCtx, Subst.shift(idx + 1, entry.tpe)),
+                    Quote.normalize(n, envCtx, argType),
+                  ) => Term.Var(idx)
+            }.map(acc :+ _)
+          }
+        }
+      candidatesOpt.map { args =>
+        val proofTerm = args.foldLeft(defEntry.body)(Term.App.apply)
+        // Substitute innermost binder first so each Subst.subst correctly lowers
+        // remaining De Bruijn indices: innermost Var(0) gets the last arg, then the
+        // former Var(1) becomes Var(0) and gets the second-to-last arg, and so on.
+        val propTerm = args.reverse.foldLeft(coreProp) { (t, arg) => Subst.subst(arg, t) }
+        (proofTerm, propTerm)
+      }
 
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)

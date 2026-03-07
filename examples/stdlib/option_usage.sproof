@@ -1,0 +1,11 @@
+// Uses stdlib/Option.sproof declarations directly (prepend stdlib source before this file)
+
+// Demonstrate get_or_else on a known some value
+defspec get_or_else_some_use(v: Nat): get_or_else(Option.some(v), Nat.zero) = v {
+  by trivial
+}
+
+// Demonstrate map_option on none
+defspec map_option_none_use(f: Nat -> Nat): map_option(Option.none, f) = Option.none {
+  by trivial
+}

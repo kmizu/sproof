@@ -100,4 +100,31 @@ class JsonOutputSuite extends FunSuite:
     assert(json.contains("\"range\""), s"should include parse range:\n$json")
   }
 
+  test("proof failure diagnostic includes goalTarget and tacticSuggestions"):
+    val source =
+      """|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+         |def plus(n: Nat, m: Nat): Nat {
+         |  match n { case Nat.zero => m  case Nat.succ(k) => Nat.succ(plus(k, m)) }
+         |}
+         |defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n { by trivial }
+         |""".stripMargin
+    val json = Main.processSourceJson(source, "goal.sproof")
+    assert(json.contains("\"ok\":false"), s"should fail:\n$json")
+    assert(json.contains("\"goalTarget\""), s"should include goalTarget field:\n$json")
+    assert(json.contains("\"tacticSuggestions\""), s"should include tacticSuggestions field:\n$json")
+    // goalTarget should capture the failing equality
+    assert(json.contains("= n") || json.contains("plus"), s"goalTarget should mention goal sides:\n$json")
+    // tacticSuggestions should recommend induction for a non-trivial equality
+    assert(json.contains("induction"), s"should suggest induction for non-trivial Eq goal:\n$json")
+
+  test("successful check has null goalTarget and null tacticSuggestions"):
+    val source =
+      """|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+         |defspec refl(n: Nat): n = n { by trivial }
+         |""".stripMargin
+    val json = Main.processSourceJson(source, "ok.sproof")
+    assert(json.contains("\"ok\":true"), s"should succeed:\n$json")
+    // No diagnostics on success, so the fields won't appear
+    assert(!json.contains("\"goalTarget\""), s"success should not have goalTarget:\n$json")
+
 end JsonOutputSuite

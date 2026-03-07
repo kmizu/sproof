@@ -1,0 +1,62 @@
+// verified_stack.sproof
+//
+// A simple verified stack backed by a Nat-list.
+// Demonstrates that sproof proofs are just ordinary Scala-shaped programs with
+// attached defspecs — the kind of data structure a Scala programmer might verify.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+inductive List {
+  case nil: List
+  case cons(head: Nat, tail: List): List
+}
+
+// Stack operations: top of stack = head of list.
+
+def push(x: Nat, s: List): List {
+  List.cons(x, s)
+}
+
+def pop(s: List): List {
+  match s {
+    case List.nil        => List.nil
+    case List.cons(h, t) => t
+  }
+}
+
+def peek(s: List): Nat {
+  match s {
+    case List.nil        => Nat.zero
+    case List.cons(h, t) => h
+  }
+}
+
+def is_empty(s: List): Bool {
+  match s {
+    case List.nil        => Bool.true
+    case List.cons(h, t) => Bool.false
+  }
+}
+
+// After pushing x onto s, peeking at the top returns x.
+defspec peek_after_push(x: Nat, s: List): peek(push(x, s)) = x {
+  by trivial
+}
+
+// After pushing x onto s, popping returns s.
+defspec pop_after_push(x: Nat, s: List): pop(push(x, s)) = s {
+  by trivial
+}
+
+// Pushing any element makes the stack non-empty.
+defspec push_not_empty(x: Nat, s: List): is_empty(push(x, s)) = Bool.false {
+  by trivial
+}

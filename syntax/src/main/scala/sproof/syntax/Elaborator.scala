@@ -76,24 +76,11 @@ object Elaborator:
         case SDecl.SDefspec(name, params, prop, proof) =>
           if defspecs.contains(name) then
             return Left(ElabError(s"Duplicate defspec: $name"))
-          val nameEnv = params.reverse.map(_.name)
-          val typeAnns = buildTypeAnns(params, env)
-          // Elaborate param types (with accumulating context for dependent types)
-          val elabParamTypes: Either[ElabError, List[(String, Term)]] =
-            params.zipWithIndex.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) {
-              case (acc, (p, i)) => acc.flatMap { lst =>
-                val tNameEnv = params.take(i).reverse.map(_.name)
-                elabType(p.tpe, env, tNameEnv).map(tpe => lst :+ (p.name, tpe))
-              }
-            }
-          elabParamTypes match
+          elabDefspec(name, params, prop, proof, env) match
             case Left(err) => return Left(err)
-            case Right(elabParams) =>
-              elabType(prop, env, nameEnv, typeAnns) match
-                case Left(err)    => return Left(err)
-                case Right(propT) =>
-                  defspecs = defspecs + (name -> (elabParams, propT, proof))
-                  defspecOrder = defspecOrder :+ name
+            case Right((elabParams, propT)) =>
+              defspecs = defspecs + (name -> (elabParams, propT, proof))
+              defspecOrder = defspecOrder :+ name
 
         case SDecl.SStructure(name, fields) =>
           if env.lookupInd(name).isDefined || env.lookupStruct(name).isDefined then
@@ -135,8 +122,6 @@ object Elaborator:
 
         case SDecl.SAttr(attr, inner) =>
           // Process the inner decl normally, then if attr == "simp", mark it in env
-          val namesBefore = defs.keySet
-          // Recurse: elaborate the inner decl
           inner match
             case SDecl.SDef(name, params, retTpe, body) =>
               if defs.contains(name) then
@@ -148,17 +133,50 @@ object Elaborator:
                   val fullTpe = term match
                     case Term.Fix(_, tpe, _) => tpe
                     case _                   => elabType(retTpe, env, Nil).getOrElse(Term.Meta(-1))
-                  var entry = DefEntry(name, fullTpe, term)
+                  val entry = DefEntry(name, fullTpe, term)
                   env = env.addDef(entry)
                   if attr == "simp" then env = env.addToSimpSet(name)
+
+            case SDecl.SDefspec(name, params, prop, proof) =>
+              if defspecs.contains(name) then
+                return Left(ElabError(s"Duplicate defspec: $name"))
+              elabDefspec(name, params, prop, proof, env) match
+                case Left(err) => return Left(err)
+                case Right((elabParams, propT)) =>
+                  defspecs = defspecs + (name -> (elabParams, propT, proof))
+                  defspecOrder = defspecOrder :+ name
+                  if attr == "simp" then env = env.addToSimpSet(name)
+
             case _ =>
-              // For non-def declarations, just process inner (attrs ignored)
+              // For other declaration kinds, attrs are currently ignored
               ()
 
         case SDecl.SCheck(expr) =>
           checks = checks :+ expr
 
     Right(ElabResult(env, defs, defspecs, defspecOrder, checks))
+
+  /** Helper: elaborate a defspec declaration, returning (elabParams, propTerm). */
+  private def elabDefspec(
+    name:   String,
+    params: List[SParam],
+    prop:   SType,
+    proof:  SProof,
+    env:    GlobalEnv,
+  ): Either[ElabError, (List[(String, Term)], Term)] =
+    val nameEnv  = params.reverse.map(_.name)
+    val typeAnns = buildTypeAnns(params, env)
+    val elabParamTypes: Either[ElabError, List[(String, Term)]] =
+      params.zipWithIndex.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) {
+        case (acc, (p, i)) => acc.flatMap { lst =>
+          val tNameEnv = params.take(i).reverse.map(_.name)
+          elabType(p.tpe, env, tNameEnv).map(tpe => lst :+ (p.name, tpe))
+        }
+      }
+    for
+      elabParams <- elabParamTypes
+      propT      <- elabType(prop, env, nameEnv, typeAnns)
+    yield (elabParams, propT)
 
   /** Public API: elaborate a surface type given a GlobalEnv and a Context.
     * Builds a nameEnv from the context entries.

@@ -5,6 +5,11 @@ inductive Nat {
   case succ(n: Nat): Nat
 }
 
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
 def plus(n: Nat, m: Nat): Nat {
   match n {
     case Nat.zero    => m
@@ -46,6 +51,33 @@ def map(xs: List, f: Nat -> Nat): List {
   }
 }
 
+def filter(xs: List, p: Nat -> Bool): List {
+  match xs {
+    case List.nil        => List.nil
+    case List.cons(h, t) =>
+      match p(h) {
+        case Bool.true  => List.cons(h, filter(t, p))
+        case Bool.false => filter(t, p)
+      }
+  }
+}
+
+def fold_left(xs: List, acc: Nat, f: Nat -> Nat -> Nat): Nat {
+  match xs {
+    case List.nil        => acc
+    case List.cons(h, t) => fold_left(t, f(acc, h), f)
+  }
+}
+
+def fold_right(xs: List, init: Nat, f: Nat -> Nat -> Nat): Nat {
+  match xs {
+    case List.nil        => init
+    case List.cons(h, t) => f(h, fold_right(t, init, f))
+  }
+}
+
+// ---- Base-case defspecs (trivial) ----
+
 defspec length_nil(): length(List.nil) = Nat.zero {
   by trivial
 }
@@ -60,4 +92,47 @@ defspec map_nil(f: Nat -> Nat): map(List.nil, f) = List.nil {
 
 defspec reverse_nil(): reverse(List.nil) = List.nil {
   by trivial
+}
+
+defspec filter_nil(p: Nat -> Bool): filter(List.nil, p) = List.nil {
+  by trivial
+}
+
+defspec fold_left_nil(acc: Nat, f: Nat -> Nat -> Nat): fold_left(List.nil, acc, f) = acc {
+  by trivial
+}
+
+defspec fold_right_nil(init: Nat, f: Nat -> Nat -> Nat): fold_right(List.nil, init, f) = init {
+  by trivial
+}
+
+// map_cons(h, t, f): map(cons(h, t), f) = cons(f(h), map(t, f))
+defspec map_cons(h: Nat, t: List, f: Nat -> Nat): map(List.cons(h, t), f) = List.cons(f(h), map(t, f)) {
+  by trivial
+}
+
+// ---- Inductive defspecs ----
+
+// append(xs, nil) = xs
+defspec append_nil_right(xs: List): append(xs, List.nil) = xs {
+  by induction xs {
+    case nil        => trivial
+    case cons h t ih => simplify [ih]
+  }
+}
+
+// append(append(xs, ys), zs) = append(xs, append(ys, zs))
+defspec append_assoc(xs: List, ys: List, zs: List): append(append(xs, ys), zs) = append(xs, append(ys, zs)) {
+  by induction xs {
+    case nil        => trivial
+    case cons h t ih => simplify [ih]
+  }
+}
+
+// length(append(xs, ys)) = plus(length(xs), length(ys))
+defspec length_append(xs: List, ys: List): length(append(xs, ys)) = plus(length(xs), length(ys)) {
+  by induction xs {
+    case nil        => trivial
+    case cons h t ih => simplify [ih]
+  }
 }

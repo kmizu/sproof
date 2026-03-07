@@ -1,0 +1,43 @@
+// stdlib v1: Pair (Nat-valued)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Pair {
+  case mk(fst_val: Nat, snd_val: Nat): Pair
+}
+
+def fst(p: Pair): Nat {
+  match p {
+    case Pair.mk(a, b) => a
+  }
+}
+
+def snd(p: Pair): Nat {
+  match p {
+    case Pair.mk(a, b) => b
+  }
+}
+
+def swap(p: Pair): Pair {
+  match p {
+    case Pair.mk(a, b) => Pair.mk(b, a)
+  }
+}
+
+// fst(mk(a, b)) = a
+defspec fst_mk(a: Nat, b: Nat): fst(Pair.mk(a, b)) = a {
+  by trivial
+}
+
+// snd(mk(a, b)) = b
+defspec snd_mk(a: Nat, b: Nat): snd(Pair.mk(a, b)) = b {
+  by trivial
+}
+
+// swap(mk(a, b)) = mk(b, a)
+defspec swap_mk(a: Nat, b: Nat): swap(Pair.mk(a, b)) = Pair.mk(b, a) {
+  by trivial
+}

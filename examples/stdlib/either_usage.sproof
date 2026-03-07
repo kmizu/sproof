@@ -1,0 +1,11 @@
+// Uses stdlib/Either.sproof declarations directly (prepend stdlib source before this file)
+
+// Demonstrate map_either applies to right but not left
+defspec map_either_right_use(v: Nat, f: Nat -> Nat): map_either(Either.right(v), f) = Either.right(f(v)) {
+  by trivial
+}
+
+// get_right retrieves the right value
+defspec get_right_use(v: Nat): get_right(Either.right(v), Nat.zero) = v {
+  by trivial
+}

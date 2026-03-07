@@ -1,0 +1,42 @@
+// verified_ordering.sproof
+//
+// Less-than-or-equal ordering on Nat, with formal proofs:
+//   leq_zero  — zero is ≤ every natural number (trivial)
+//   leq_refl  — every natural number is ≤ itself (proved by induction)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def leq(n: Nat, m: Nat): Bool {
+  match n {
+    case Nat.zero    => Bool.true
+    case Nat.succ(k) =>
+      match m {
+        case Nat.zero    => Bool.false
+        case Nat.succ(j) => leq(k, j)
+      }
+  }
+}
+
+// zero is ≤ everything — follows immediately from the definition.
+defspec leq_zero(m: Nat): leq(Nat.zero, m) = Bool.true {
+  by trivial
+}
+
+// Every Nat is ≤ itself — proved by structural induction.
+//   Base:      leq(0, 0)     = true  (trivial)
+//   Inductive: leq(k, k) = true  ⊢  leq(succ(k), succ(k)) = true
+//              LHS reduces definitionally to leq(k, k), so the IH closes the goal.
+defspec leq_refl(n: Nat): leq(n, n) = Bool.true {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}

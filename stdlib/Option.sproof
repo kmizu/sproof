@@ -1,0 +1,84 @@
+// stdlib v1: Option (Nat-valued)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+inductive Option {
+  case none: Option
+  case some(value: Nat): Option
+}
+
+def map_option(o: Option, f: Nat -> Nat): Option {
+  match o {
+    case Option.none    => Option.none
+    case Option.some(v) => Option.some(f(v))
+  }
+}
+
+def get_or_else(o: Option, default: Nat): Nat {
+  match o {
+    case Option.none    => default
+    case Option.some(v) => v
+  }
+}
+
+def is_some(o: Option): Bool {
+  match o {
+    case Option.none    => Bool.false
+    case Option.some(v) => Bool.true
+  }
+}
+
+def is_none(o: Option): Bool {
+  match o {
+    case Option.none    => Bool.true
+    case Option.some(v) => Bool.false
+  }
+}
+
+// map_option(none, f) = none
+defspec map_option_none(f: Nat -> Nat): map_option(Option.none, f) = Option.none {
+  by trivial
+}
+
+// map_option(some(v), f) = some(f(v))
+defspec map_option_some(v: Nat, f: Nat -> Nat): map_option(Option.some(v), f) = Option.some(f(v)) {
+  by trivial
+}
+
+// get_or_else(none, d) = d
+defspec get_or_else_none(d: Nat): get_or_else(Option.none, d) = d {
+  by trivial
+}
+
+// get_or_else(some(v), d) = v
+defspec get_or_else_some(v: Nat, d: Nat): get_or_else(Option.some(v), d) = v {
+  by trivial
+}
+
+// is_some(none) = false
+defspec is_some_none(): is_some(Option.none) = Bool.false {
+  by trivial
+}
+
+// is_some(some(v)) = true
+defspec is_some_some(v: Nat): is_some(Option.some(v)) = Bool.true {
+  by trivial
+}
+
+// is_none(none) = true
+defspec is_none_none(): is_none(Option.none) = Bool.true {
+  by trivial
+}
+
+// is_none(some(v)) = false
+defspec is_none_some(v: Nat): is_none(Option.some(v)) = Bool.false {
+  by trivial
+}

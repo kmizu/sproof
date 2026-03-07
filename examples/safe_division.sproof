@@ -1,0 +1,54 @@
+// safe_division.sproof
+//
+// Safe integer division using Either to make the zero-divisor case explicit.
+// Demonstrates how sproof can verify error-handling logic that Scala programmers
+// write defensively: the proof guarantees the result type at each call site.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+// Either Nat Nat: left = failure (division by zero), right = success (quotient)
+inductive Either {
+  case left(value: Nat): Either
+  case right(value: Nat): Either
+}
+
+def is_right(e: Either): Bool {
+  match e {
+    case Either.left(v)  => Bool.false
+    case Either.right(v) => Bool.true
+  }
+}
+
+def is_left(e: Either): Bool {
+  match e {
+    case Either.left(v)  => Bool.true
+    case Either.right(v) => Bool.false
+  }
+}
+
+// Safe division: returns Left(0) when the divisor is zero, Right(n) when > 0.
+// (The quotient computation is elided for clarity; the focus is on the type guarantee.)
+def safe_div(n: Nat, m: Nat): Either {
+  match m {
+    case Nat.zero    => Either.left(Nat.zero)
+    case Nat.succ(k) => Either.right(n)
+  }
+}
+
+// When the divisor is positive, safe_div always returns Right.
+defspec safe_div_succeeds(n: Nat, k: Nat): is_right(safe_div(n, Nat.succ(k))) = Bool.true {
+  by trivial
+}
+
+// When the divisor is zero, safe_div always returns Left.
+defspec safe_div_fails(n: Nat): is_left(safe_div(n, Nat.zero)) = Bool.true {
+  by trivial
+}

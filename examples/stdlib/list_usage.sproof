@@ -1,5 +1,26 @@
 // Uses stdlib/List.sproof declarations directly (prepend stdlib source before this file)
 
+// append nil on the left is identity
 defspec append_nil_left_use(ys: List): append(List.nil, ys) = ys {
+  by trivial
+}
+
+// map over nil is nil
+defspec map_nil_use(f: Nat -> Nat): map(List.nil, f) = List.nil {
+  by trivial
+}
+
+// filter over nil is nil
+defspec filter_nil_use(p: Nat -> Bool): filter(List.nil, p) = List.nil {
+  by trivial
+}
+
+// fold_left over nil returns the accumulator
+defspec fold_left_nil_use(acc: Nat, f: Nat -> Nat -> Nat): fold_left(List.nil, acc, f) = acc {
+  by trivial
+}
+
+// fold_right over nil returns the initial value
+defspec fold_right_nil_use(init: Nat, f: Nat -> Nat -> Nat): fold_right(List.nil, init, f) = init {
   by trivial
 }

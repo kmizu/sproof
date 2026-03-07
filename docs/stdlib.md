@@ -1,6 +1,6 @@
 # stdlib v1 layout and naming
 
-This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, and `Pair`.
+This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`, `PolyList`, `Char`, and `String`.
 
 ## Layout
 
@@ -14,12 +14,15 @@ This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relati
 - `stdlib/Option.sproof`
 - `stdlib/Either.sproof`
 - `stdlib/Pair.sproof`
+- `stdlib/PolyList.sproof`
+- `stdlib/Char.sproof`
+- `stdlib/String.sproof`
 
 Each file is self-contained and checker-runnable by itself.
 
 ## Naming conventions
 
-- File names use PascalCase domain names (`Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`).
+- File names use PascalCase domain names (`Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`, `PolyList`, `Char`, `String`).
 - Definitions and lemmas use `snake_case`.
 - Core operations keep short canonical names (`plus`, `append`, `length`, `concat`, `not`, `and`, `or`, `map_option`, `get_or_else`, `map_either`, `fst`, `snd`).
 - Baseline lemmas use descriptive suffixes (`_nil`, `_left`, `_right`, `_none`, `_some`, `_mk`).
@@ -38,6 +41,9 @@ Each file is self-contained and checker-runnable by itself.
 | Option | Nat, Bool, Option | map_option, get_or_else, is_some, is_none | map_option_none/some, get_or_else_none/some, is_some/is_none variants |
 | Either | Nat, Bool, Either | map_either, is_left, is_right, get_left, get_right | map_either_left/right, is_left/right variants, get_left/right |
 | Pair | Nat, Pair | fst, snd, swap | fst_mk, snd_mk, swap_mk |
+| PolyList | Nat, Bool, PolyList(A) | poly_length, poly_append, poly_reverse | poly_length_nil, poly_append_nil_left, poly_reverse_nil (trivial only; inductive proofs for polymorphic inductives are future work) |
+| Char | Nat, Char | char_code | char_code_mk |
+| String | Nat, Bool, Char, String | string_length, string_append, string_reverse | string_length_empty, string_append_empty_left/right, string_append_assoc, string_length_append |
 
 ## Compatibility policy
 

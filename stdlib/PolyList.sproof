@@ -1,0 +1,65 @@
+// stdlib v2: PolyList (polymorphic, element type A: Type)
+//
+// NOTE: Structural-induction proofs over polymorphic inductives are not yet
+// supported due to how type parameters are represented in constructor arg types.
+// Only base-case (trivial) defspecs are provided here.
+// For inductive proofs, use the monomorphic List.sproof (Nat-valued).
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+// Polymorphic list: structural recursion puts xs first (termination checker).
+// Type parameter A is passed explicitly as the last argument.
+inductive PolyList(A: Type) {
+  case nil: PolyList
+  case cons(head: A, tail: PolyList(A)): PolyList
+}
+
+def poly_length(xs: PolyList, A: Type): Nat {
+  match xs {
+    case PolyList.nil        => Nat.zero
+    case PolyList.cons(h, t) => Nat.succ(poly_length(t, A))
+  }
+}
+
+def poly_append(xs: PolyList, ys: PolyList, A: Type): PolyList {
+  match xs {
+    case PolyList.nil        => ys
+    case PolyList.cons(h, t) => PolyList.cons(h, poly_append(t, ys, A))
+  }
+}
+
+def poly_reverse(xs: PolyList, A: Type): PolyList {
+  match xs {
+    case PolyList.nil        => PolyList.nil
+    case PolyList.cons(h, t) => poly_append(poly_reverse(t, A), PolyList.cons(h, PolyList.nil), A)
+  }
+}
+
+// ---- Base-case defspecs (trivial) ----
+
+defspec poly_length_nil(A: Type): poly_length(PolyList.nil, A) = Nat.zero {
+  by trivial
+}
+
+defspec poly_append_nil_left(A: Type, ys: PolyList): poly_append(PolyList.nil, ys, A) = ys {
+  by trivial
+}
+
+defspec poly_reverse_nil(A: Type): poly_reverse(PolyList.nil, A) = PolyList.nil {
+  by trivial
+}

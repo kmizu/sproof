@@ -1,0 +1,99 @@
+// stdlib v1: String
+//
+// String is a monomorphic list of Char (Unicode code points wrapped in Nat).
+// Defined as its own inductive rather than PolyList(Char) to enable full
+// structural-induction proofs, which are not yet available for polymorphic
+// inductives.
+//
+// Design mirrors List.sproof (Nat-valued) but with Char elements.
+// Functions and defspecs follow the same naming conventions.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+inductive Char {
+  case mk(code: Nat): Char
+}
+
+// String: a monomorphic sequence of Char values.
+inductive String {
+  case empty: String
+  case cons(head: Char, tail: String): String
+}
+
+def string_length(s: String): Nat {
+  match s {
+    case String.empty      => Nat.zero
+    case String.cons(c, t) => Nat.succ(string_length(t))
+  }
+}
+
+def string_append(s: String, t: String): String {
+  match s {
+    case String.empty      => t
+    case String.cons(c, r) => String.cons(c, string_append(r, t))
+  }
+}
+
+def string_reverse(s: String): String {
+  match s {
+    case String.empty      => String.empty
+    case String.cons(c, t) => string_append(string_reverse(t), String.cons(c, String.empty))
+  }
+}
+
+// ---- Base-case defspecs (trivial) ----
+
+defspec string_length_empty(): string_length(String.empty) = Nat.zero {
+  by trivial
+}
+
+defspec string_append_empty_left(t: String): string_append(String.empty, t) = t {
+  by trivial
+}
+
+defspec string_reverse_empty(): string_reverse(String.empty) = String.empty {
+  by trivial
+}
+
+// ---- Inductive defspecs ----
+
+// string_append(s, String.empty) = s
+defspec string_append_empty_right(s: String): string_append(s, String.empty) = s {
+  by induction s {
+    case empty        => trivial
+    case cons c t ih  => simplify [ih]
+  }
+}
+
+// string_append(string_append(s, t), u) = string_append(s, string_append(t, u))
+defspec string_append_assoc(s: String, t: String, u: String):
+    string_append(string_append(s, t), u) = string_append(s, string_append(t, u)) {
+  by induction s {
+    case empty        => trivial
+    case cons c r ih  => simplify [ih]
+  }
+}
+
+// string_length(string_append(s, t)) = plus(string_length(s), string_length(t))
+defspec string_length_append(s: String, t: String):
+    string_length(string_append(s, t)) = plus(string_length(s), string_length(t)) {
+  by induction s {
+    case empty        => trivial
+    case cons c r ih  => simplify [ih]
+  }
+}

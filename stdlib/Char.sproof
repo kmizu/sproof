@@ -1,0 +1,43 @@
+// stdlib v1: Char
+//
+// Char is a wrapper around Nat (Unicode code point).
+// This follows the Isabelle approach: the logical representation is a Nat,
+// wrapped in a constructor to distinguish character data from numeric data.
+//
+// Char.mk(Nat.zero)            -- U+0000 NULL
+// Char.mk(Nat.succ(...65...))  -- 'A' (U+0041)
+//
+// Practical validity constraints (e.g. isValidCodepoint) are not encoded here,
+// keeping proofs manageable.  The Lean 4 style (UInt32 + validity proof) would
+// require sigma types, which are future work.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+inductive Char {
+  case mk(code: Nat): Char
+}
+
+// Extract the code point.
+def char_code(c: Char): Nat {
+  match c {
+    case Char.mk(n) => n
+  }
+}
+
+// Equality of characters as equality of their code points.
+// (Relies on Nat.eq from context; here we just expose the accessor.)
+
+// ---- Defspecs ----
+
+// char_code(Char.mk(n)) = n
+defspec char_code_mk(n: Nat): char_code(Char.mk(n)) = n {
+  by trivial
+}

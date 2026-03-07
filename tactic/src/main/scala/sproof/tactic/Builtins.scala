@@ -556,9 +556,17 @@ object Builtins:
               Term.App(Term.Ind("Eq", Nil, Nil),
                 Term.Con(lname, lref, shiftedLArgs)),
               Term.Con(rname, rref, motiveRArgs))
-            // Use the inductive ref as the motive binder type (works for recursive positions
-            // like the tail of cons or the predecessor of succ — the common inductive proof case).
-            val motiveFunc = Term.Lam("x", Term.Ind(lref, Nil, Nil), motiveBody)
+            // Determine the motive binder type.  For parameterized inductives (e.g. List(A)),
+            // `Term.Ind(lref, Nil, Nil)` is wrong — we need `List(A)` as the binder type.
+            // When rargs(k) normalises to a Var we can look up its exact type in the context
+            // (ctx.apply returns the type already well-formed in the current context) and shift
+            // by 1 for the extra motive binder.  Otherwise fall back to the bare Ind.
+            val motiveBinderTpe: Term = rargs(k) match
+              case Term.Var(idx) =>
+                goal.ctx.lookup(idx).getOrElse(Term.Ind(lref, Nil, Nil))
+              case _ =>
+                Term.Ind(lref, Nil, Nil)
+            val motiveFunc = Term.Lam("x", motiveBinderTpe, motiveBody)
             // Branch body: refl of the fully-shifted LHS constructor.
             val body      = Term.Con("refl", "Eq", List(Term.Con(lname, lref, shiftedLArgs)))
             val proofTerm = Term.Mat(

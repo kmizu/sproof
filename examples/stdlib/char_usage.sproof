@@ -1,0 +1,6 @@
+// Uses stdlib/Char.sproof declarations directly (prepend stdlib source before this file)
+
+// char_code extracts the code point
+defspec char_code_mk_use(n: Nat): char_code(Char.mk(n)) = n {
+  by trivial
+}

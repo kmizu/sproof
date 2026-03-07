@@ -1,0 +1,19 @@
+// Uses stdlib/String.sproof declarations directly (prepend stdlib source before this file)
+
+// Empty string has length zero
+defspec string_length_empty_use(): string_length(String.empty) = Nat.zero {
+  by trivial
+}
+
+// Appending empty on the left is identity
+defspec string_append_empty_left_use(t: String): string_append(String.empty, t) = t {
+  by trivial
+}
+
+// Appending empty on the right is identity (inductive, reuses stdlib proof)
+defspec string_append_empty_right_use(s: String): string_append(s, String.empty) = s {
+  by induction s {
+    case empty        => trivial
+    case cons c t ih  => simplify [ih]
+  }
+}

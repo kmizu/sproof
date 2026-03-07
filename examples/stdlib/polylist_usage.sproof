@@ -1,0 +1,16 @@
+// Uses stdlib/PolyList.sproof declarations directly (prepend stdlib source before this file)
+
+// poly_length(nil, A) = 0 — for any element type A
+defspec polylist_length_nil_use(A: Type): poly_length(PolyList.nil, A) = Nat.zero {
+  by trivial
+}
+
+// poly_append(nil, ys, A) = ys — left identity for any element type A
+defspec polylist_append_nil_left_use(A: Type, ys: PolyList): poly_append(PolyList.nil, ys, A) = ys {
+  by trivial
+}
+
+// poly_reverse(nil, A) = nil
+defspec polylist_reverse_nil_use(A: Type): poly_reverse(PolyList.nil, A) = PolyList.nil {
+  by trivial
+}

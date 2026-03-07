@@ -42,7 +42,7 @@ object Parser:
         "assumption", "contradiction", "cases",
         "if", "then", "else",
       ),
-      hardOperators = Set("->", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@", "|"),
+      hardOperators = Set("->", "==", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@", "|"),
     ),
   ))
 
@@ -405,7 +405,7 @@ object Parser:
   private lazy val theoremDecl: Parsley[SDecl] =
     keyword("theorem") *> anyIdentifier.flatMap { name =>
       option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
-        paramList.flatMap { params =>
+        option(paramList).map(_.getOrElse(Nil)).flatMap { params =>
           (op(":") *> propType).flatMap { prop =>
             braces(proof).map { prf =>
               SDecl.SDefspec(name, tparams ++ params, prop, prf)
@@ -484,11 +484,12 @@ object Parser:
     braces(fwd(expr)),
   )
 
-  /** defspec name[A](params): prop { by tactic } */
+  /** defspec name[A](params): prop { by tactic }
+    * Params are optional: `defspec foo: 1 == 1 { by trivial }` is valid. */
   private lazy val defspecDecl: Parsley[SDecl] =
     keyword("defspec") *> anyIdentifier.flatMap { name =>
       option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
-        paramList.flatMap { params =>
+        option(paramList).map(_.getOrElse(Nil)).flatMap { params =>
           (op(":") *> propType).flatMap { prop =>
             braces(proof).map { prf =>
               SDecl.SDefspec(name, tparams ++ params, prop, prf)
@@ -498,11 +499,18 @@ object Parser:
       }
     }
 
-  /** Proposition type: either an equality `expr = expr` or a regular type.
+  /** Proposition type: either an equality `expr = expr` (or `expr == expr`) or a regular type.
     * For equality, both sides are parsed as expressions (to allow `plus(n, Nat.zero) = n`).
+    * `==` is accepted as a synonym for `=` in proposition position.
     */
   private lazy val propType: Parsley[SType] = choice(
-    // Try equality: expr = expr (must use atomic because expr might partially consume)
+    // Try equality with == (must come before = to avoid ambiguity)
+    atomic(fwd(expr).flatMap { lhs =>
+      op("==") *> fwd(expr).map { rhs =>
+        SType.STEq(lhs, rhs)
+      }
+    }),
+    // Try equality with =
     atomic(fwd(expr).flatMap { lhs =>
       op("=") *> fwd(expr).map { rhs =>
         SType.STEq(lhs, rhs)

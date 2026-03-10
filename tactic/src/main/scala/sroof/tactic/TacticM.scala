@@ -45,11 +45,43 @@ object TacticM:
 
   // ---- Goal operations ----
 
-  /** Return the current (first) goal, or fail with NoGoals. */
+  /** Substitute all solved metas in a term using the evidence table.
+   *  This ensures that dependent subgoal types like `A = A(Meta(id))` are
+   *  updated to `A = A(solved_value)` after the meta is solved by a prior tactic.
+   */
+  private def substituteEvidence(t: Term, evidence: Map[MetaVar, Term]): Term =
+    t match
+      case Term.Meta(id) =>
+        val mv = MetaVar(id)
+        evidence.get(mv).map(substituteEvidence(_, evidence)).getOrElse(t)
+      case Term.App(fn, arg) =>
+        Term.App(substituteEvidence(fn, evidence), substituteEvidence(arg, evidence))
+      case Term.Lam(n, tp, body) =>
+        Term.Lam(n, substituteEvidence(tp, evidence), substituteEvidence(body, evidence))
+      case Term.Pi(n, dom, cod) =>
+        Term.Pi(n, substituteEvidence(dom, evidence), substituteEvidence(cod, evidence))
+      case Term.Let(n, tp, defn, body) =>
+        Term.Let(n, substituteEvidence(tp, evidence), substituteEvidence(defn, evidence), substituteEvidence(body, evidence))
+      case Term.Con(nm, ref, args) =>
+        Term.Con(nm, ref, args.map(substituteEvidence(_, evidence)))
+      case Term.Mat(scrut, cases, rt) =>
+        Term.Mat(substituteEvidence(scrut, evidence),
+          cases.map(mc => mc.copy(body = substituteEvidence(mc.body, evidence))),
+          substituteEvidence(rt, evidence))
+      case Term.Fix(nm, tp, body) =>
+        Term.Fix(nm, substituteEvidence(tp, evidence), substituteEvidence(body, evidence))
+      case _ => t
+
+  /** Return the current (first) goal, or fail with NoGoals.
+   *  The goal's target has all solved metas substituted from the evidence table,
+   *  so dependent subgoal types are up-to-date after prior tactics solve earlier metas.
+   */
   def currentGoal: TacticM[(MetaVar, Goal)] =
     get.flatMap { s =>
       s.goals.headOption match
-        case Some(g) => pure(g)
+        case Some((mv, goal)) =>
+          val freshTarget = substituteEvidence(goal.target, s.evidence)
+          pure((mv, goal.copy(target = freshTarget)))
         case None    => fail(TacticError.NoGoals)
     }
 

@@ -31,6 +31,7 @@ enum SType:
   case STPi(name: String, dom: SType, cod: SType)
   case STUni(level: Int)
   case STEq(lhs: SExpr, rhs: SExpr)              // a = b (propositional equality)
+  case STExpr(expr: SExpr)                       // value expression used as type argument (e.g. Regex.eps in Accept(Regex.eps, s))
 
 /** Surface expressions. */
 enum SExpr:

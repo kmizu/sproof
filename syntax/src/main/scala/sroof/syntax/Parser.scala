@@ -153,10 +153,24 @@ object Parser:
    *
    *  Multi-argument applications are desugared to left-associative binary STApp:
    *  Vec(A, n) → STApp(STApp(STVar("Vec"), STVar("A")), STVar("n"))
+   *
+   *  Type arguments may be either types (A: Type) or value expressions used as
+   *  indices (e.g. Regex.eps, List.nil in Accept(Regex.eps, List.nil)).
+   *  We first try parsing as a typeExpr; if that fails, fall back to simpleExpr
+   *  wrapped in STExpr.
    */
+  private lazy val typeOrExprArg: Parsley[SType] =
+    // Parse as simpleExpr (handles both plain names and dotted constructors like Regex.eps).
+    // SEVar is treated as a type variable (STVar); other exprs are wrapped in STExpr.
+    // Arrow types in arg position require explicit parens: write (A -> B) not A -> B.
+    fwd(simpleExpr).map {
+      case SExpr.SEVar(name) => SType.STVar(name)
+      case other             => SType.STExpr(other)
+    }
+
   private lazy val typeVarOrApp: Parsley[SType] =
     identifier.flatMap { name =>
-      option(parens(sepBy1(fwd(typeExpr), op(",")))).map {
+      option(parens(sepBy1(typeOrExprArg, op(",")))).map {
         case Some(args) =>
           args.foldLeft(SType.STVar(name): SType)((fn, arg) => SType.STApp(fn, arg))
         case None =>

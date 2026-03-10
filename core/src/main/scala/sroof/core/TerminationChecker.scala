@@ -9,12 +9,13 @@ package sroof.core
  *  Algorithm:
  *  1. For Fix(f, tpe, body), the body has Var(0) = f (self-reference).
  *  2. Find all occurrences of f in body.
- *  3. For each recursive call App(f, arg), verify that arg is a known
- *     structurally smaller variable (bound by a match case on a parameter).
+ *  3. For each recursive call f(a1)(a2)...(an), verify that at least one ai
+ *     is a structurally smaller variable, and that all other arguments do not
+ *     contain an unguarded reference to f.
  *
- *  This is a simplified version of Coq's guard condition. It handles the
- *  common case of structural recursion on a single argument matched at the
- *  top level of the function body.
+ *  This supports multi-argument functions where any argument may be the
+ *  decreasing one (e.g. `matches(derive(r,c), t)` where t, not r, decreases).
+ *  This is a simplified version of Coq's guard condition.
  */
 object TerminationChecker:
 
@@ -79,10 +80,21 @@ object TerminationChecker:
         else
           Right(())
 
+  /** Peel a curried application into (function, args): App(App(f, a1), a2) → (f, [a1, a2]). */
+  private def peelArgs(t: Term): (Term, List[Term]) =
+    def go(t: Term, acc: List[Term]): (Term, List[Term]) = t match
+      case Term.App(fn, arg) => go(fn, arg :: acc)
+      case other             => (other, acc)
+    go(t, Nil)
+
   /** Check that all recursive calls in `t` are to structurally smaller arguments.
    *
    *  `smallerVars` contains the De Bruijn indices (at current depth) of variables
    *  that are structurally smaller than the decreasing argument.
+   *
+   *  For a call f(a1)(a2)...(an), we accept if at least one ai is a structurally
+   *  smaller variable and all other arguments don't contain unguarded fix references.
+   *  This supports functions that recurse on any one of their arguments.
    */
   private def checkGuarded(name: String, fixIdx: Int, t: Term, smallerVars: Set[Int]): Either[String, Unit] =
     t match
@@ -90,33 +102,31 @@ object TerminationChecker:
         // Bare reference to f without application — this is a higher-order escape
         Left(s"Termination check failed: '$name' escapes as a value in a match branch")
 
-      case Term.App(Term.Var(fIdx), arg) if fIdx == fixIdx =>
-        // Direct recursive call f(arg): arg must be a smaller variable
-        arg match
-          case Term.Var(argIdx) if smallerVars.contains(argIdx) =>
-            Right(())  // Guarded: recursive call on a structurally smaller argument
+      case app @ Term.App(_, _) =>
+        val (fn, args) = peelArgs(app)
+        fn match
+          case Term.Var(fIdx) if fIdx == fixIdx =>
+            // Recursive call f(a1)(a2)...(an): at least one ai must be a smaller variable;
+            // all remaining args must not contain unguarded fix references.
+            val smallerIdx = args.indexWhere {
+              case Term.Var(i) => smallerVars.contains(i)
+              case _           => false
+            }
+            if smallerIdx < 0 then
+              Left(s"Termination check failed: '$name' is called with a non-structurally-smaller argument")
+            else
+              val otherArgs = args.zipWithIndex.filterNot(_._2 == smallerIdx).map(_._1)
+              otherArgs.foldLeft[Either[String, Unit]](Right(())) { (acc, a) =>
+                acc.flatMap(_ => checkGuarded(name, fixIdx, a, smallerVars))
+              }
           case _ =>
-            Left(
-              s"Termination check failed: '$name' is called with a non-structurally-smaller argument"
-            )
-
-      case Term.App(Term.App(Term.Var(fIdx), arg), arg2) if fIdx == fixIdx =>
-        // f(arg)(arg2): multi-argument recursive call — first arg must be smaller
-        arg match
-          case Term.Var(argIdx) if smallerVars.contains(argIdx) =>
-            // First arg is smaller; check that arg2 doesn't contain unguarded refs
-            checkGuarded(name, fixIdx, arg2, smallerVars)
-          case _ =>
-            Left(
-              s"Termination check failed: '$name' is called with a non-structurally-smaller argument"
-            )
-
-      // Nested App: recurse into both parts
-      case Term.App(fn, arg) =>
-        for
-          _ <- checkGuarded(name, fixIdx, fn, smallerVars)
-          _ <- checkGuarded(name, fixIdx, arg, smallerVars)
-        yield ()
+            // Non-recursive application: check fn and all args
+            for
+              _ <- checkGuarded(name, fixIdx, fn, smallerVars)
+              _ <- args.foldLeft[Either[String, Unit]](Right(())) { (acc, a) =>
+                     acc.flatMap(_ => checkGuarded(name, fixIdx, a, smallerVars))
+                   }
+            yield ()
 
       case Term.Lam(_, tp, body) =>
         for

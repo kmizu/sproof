@@ -333,6 +333,10 @@ object Elaborator:
           rhsT <- elabExpr(rhs, env, nameEnv, "", typeAnns)
         yield Term.App(Term.App(Term.Ind("Eq", Nil, Nil), lhsT), rhsT)
 
+      case SType.STExpr(expr) =>
+        // Value expression used as a type argument (e.g. index values in GADT-style types).
+        elabExpr(expr, env, nameEnv, "", typeAnns)
+
   // ---- Expression elaboration ----
 
   private def elabExpr(

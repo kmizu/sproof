@@ -2,7 +2,7 @@ package sroof.kernel
 
 import sroof.core.{Term, Context, GlobalEnv}
 import sroof.checker.{Bidirectional, TypeError}
-import sroof.eval.{Quote, Eval, Env, Semantic}
+import sroof.eval.{Quote, EnvBuilder}
 import sroof.tactic.Eq
 
 /** The trusted kernel: the sole source of proof validity in sroof.
@@ -43,7 +43,7 @@ object Kernel:
     (proof, Eq.extract(claimedType)) match
       case (Term.Con("refl", "Eq", List(a)), Some(triple)) =>
         val (tpe, lhs, rhs) = triple
-        val env = buildEnvWithDefs(ctx)
+        val env = EnvBuilder.fromContext(ctx)
         // refl(a) : Eq T a a  iff  a ≡ lhs ≡ rhs (definitionally)
         if Quote.convEqual(ctx.size, env, a, lhs) &&
            Quote.convEqual(ctx.size, env, lhs, rhs) then
@@ -72,11 +72,3 @@ object Kernel:
   def infer(ctx: Context, term: Term)(using env: GlobalEnv): Either[TypeError, Term] =
     Bidirectional.infer(ctx, term)
 
-  private def buildEnvWithDefs(ctx: Context): Env =
-    ctx.entries.reverse.foldLeft(List.empty[Semantic]) { (partialEnv, entry) =>
-      entry match
-        case Context.Entry.Assum(_, _) =>
-          Semantic.freshVar(partialEnv.size) :: partialEnv
-        case Context.Entry.Def(_, _, defn) =>
-          Eval.eval(partialEnv, defn) :: partialEnv
-    }

@@ -1,7 +1,7 @@
 package sroof.checker
 
 import sroof.core.{Term, Context, Subst, GlobalEnv, MatchCase}
-import sroof.eval.{Semantic, Eval, Quote, Env}
+import sroof.eval.{Semantic, Eval, Quote, Env, EnvBuilder}
 
 /** Bidirectional type checker for predicative CIC.
  *
@@ -191,11 +191,11 @@ object Bidirectional:
 
   /** Weak-head normal form via NbE round-trip. */
   def whnf(ctx: Context, t: Term): Term =
-    Quote.normalize(ctx.size, buildEnvWithDefs(ctx), t)
+    Quote.normalize(ctx.size, EnvBuilder.fromContext(ctx), t)
 
   /** Check definitional equality of `actual` and `expected` (with universe cumulativity). */
   private def convCheck(ctx: Context, actual: Term, expected: Term, term: Term): Either[TypeError, Unit] =
-    val env = buildEnvWithDefs(ctx)
+    val env = EnvBuilder.fromContext(ctx)
     // Universe cumulativity: Type_i ≤ Type_j when i ≤ j
     val normActual   = whnf(ctx, actual)
     val normExpected = whnf(ctx, expected)
@@ -205,12 +205,3 @@ object Bidirectional:
         if Quote.convEqual(ctx.size, env, actual, expected) then Right(())
         else Left(TypeError.TypeMismatch(expected, actual, term, ctx))
 
-  /** Build the NbE environment, evaluating Def (let-binding) entries. */
-  private def buildEnvWithDefs(ctx: Context): Env =
-    ctx.entries.reverse.foldLeft(List.empty[Semantic]) { (partialEnv, entry) =>
-      entry match
-        case Context.Entry.Assum(_, _) =>
-          Semantic.freshVar(partialEnv.size) :: partialEnv
-        case Context.Entry.Def(_, _, defn) =>
-          Eval.eval(partialEnv, defn) :: partialEnv
-    }

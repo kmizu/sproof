@@ -225,6 +225,16 @@ defspec matches_char_self(c: Nat):
   }
 }
 
+// matches(seq(∅, r), s) = false — the empty-language regex annihilates seq on the left
+// derive(seq(empty, r), c) = seq(derive(empty, c), r) = seq(empty, r) since nullable(empty) = false,
+// so the IH applies directly in the cons case.
+defspec empty_seq_left(r: Regex, s: List): matches(Regex.seq(Regex.empty, r), s) = Bool.false {
+  by induction s generalizing r {
+    case nil         => trivial
+    case cons h t ih => exact ih(r)
+  }
+}
+
 // matches(alt(r1,r2), s) = or(matches(r1,s), matches(r2,s))
 // Proved by induction on s, generalizing r1 and r2 so the IH applies to derivatives.
 defspec matches_alt(r1: Regex, r2: Regex, s: List):

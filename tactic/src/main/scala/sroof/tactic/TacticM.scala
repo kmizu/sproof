@@ -105,6 +105,28 @@ object TacticM:
              ))
     yield mv
 
+  // ---- Combinators ----
+
+  /** Try `primary`; if it fails, restore state and run `fallback`.
+   *
+   *  Equivalent to the common save/restore pattern:
+   *  {{{
+   *    TacticM.get.flatMap { s =>
+   *      val (newState, result) = TacticM.run(primary, s)
+   *      result match
+   *        case Right(()) => TacticM.set(newState)
+   *        case Left(_)   => fallback
+   *    }
+   *  }}}
+   */
+  def orElse(primary: TacticM[Unit], fallback: TacticM[Unit]): TacticM[Unit] =
+    get.flatMap { s =>
+      val (newState, result) = run(primary, s)
+      result match
+        case Right(()) => set(newState)
+        case Left(_)   => fallback
+    }
+
   // ---- Runner ----
 
   /** Run a tactic on a given proof state. */

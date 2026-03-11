@@ -42,6 +42,32 @@ object Term:
     case Fix(n, _, _)      => s"(fix $n)"
     case Meta(i)           => s"?$i"
 
+  /** Generic depth-aware variable substitution.
+   *
+   *  Traverses `t`, tracking binder depth.  At each `Var(i)`, calls `f(depth, i)` which
+   *  returns the replacement term.  All other nodes are rebuilt structurally.
+   *
+   *  This eliminates the duplicated `go(depth: Int, t: Term): Term` pattern that otherwise
+   *  appears in Builtins (specializeGoal, computeMotiveBody, genSpecializeGoal),
+   *  IndChecker (instantiateArgType, instantiateCtorArgTpe, specializeForCase),
+   *  Quote (substCapturedEnv), and TacticM (substEvidence).
+   */
+  def mapVar(f: (Int, Int) => Term)(t: Term): Term =
+    def go(depth: Int, t: Term): Term = t match
+      case Var(i)              => f(depth, i)
+      case App(fn, a)          => App(go(depth, fn), go(depth, a))
+      case Lam(x, tp, b)      => Lam(x, go(depth, tp), go(depth + 1, b))
+      case Pi(x, d, c)        => Pi(x, go(depth, d), go(depth + 1, c))
+      case Let(x, tp, df, b)  => Let(x, go(depth, tp), go(depth, df), go(depth + 1, b))
+      case Uni(_) | Meta(_)   => t
+      case Ind(nm, ps, cs)    =>
+        Ind(nm, ps.map(p => Param(p.name, go(depth, p.tpe))), cs.map(c => Ctor(c.name, go(depth, c.tpe))))
+      case Con(nm, r, args)   => Con(nm, r, args.map(go(depth, _)))
+      case Fix(nm, tp, b)     => Fix(nm, go(depth, tp), go(depth + 1, b))
+      case Mat(s, cases, rt)  =>
+        Mat(go(depth, s), cases.map(mc => mc.copy(body = go(depth + mc.bindings, mc.body))), go(depth, rt))
+    go(0, t)
+
   /** Check if De Bruijn index `idx` occurs free in term `t` (used for arrow-type detection). */
   def freeIn(idx: Int, t: Term): Boolean = t match
     case Var(i)           => i == idx

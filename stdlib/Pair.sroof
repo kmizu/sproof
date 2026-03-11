@@ -41,3 +41,10 @@ defspec snd_mk(a: Nat, b: Nat): snd(Pair.mk(a, b)) = b {
 defspec swap_mk(a: Nat, b: Nat): swap(Pair.mk(a, b)) = Pair.mk(b, a) {
   by trivial
 }
+
+// swap(swap(p)) = p
+defspec swap_swap(p: Pair): swap(swap(p)) = p {
+  by cases p {
+    case mk a b => trivial
+  }
+}

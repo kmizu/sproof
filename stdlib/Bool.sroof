@@ -46,3 +46,39 @@ defspec or_false(b: Bool): or(b, Bool.false) = b {
     case false => trivial
   }
 }
+
+defspec and_idem(b: Bool): and(b, b) = b {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+defspec and_false(b: Bool): and(b, Bool.false) = Bool.false {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+defspec or_true(b: Bool): or(b, Bool.true) = Bool.true {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+defspec or_idem(b: Bool): or(b, b) = b {
+  by induction b {
+    case true  => trivial
+    case false => trivial
+  }
+}
+
+defspec not_true(): not(Bool.true) = Bool.false {
+  by trivial
+}
+
+defspec not_false(): not(Bool.false) = Bool.true {
+  by trivial
+}

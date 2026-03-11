@@ -2,7 +2,7 @@ package sroof.tactic
 
 import sroof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, Param, Ctor, DefEntry}
 import sroof.checker.Bidirectional
-import sroof.eval.{Quote, Eval, Env, Semantic, Neutral}
+import sroof.eval.{Quote, Eval, Env, Semantic, Neutral, EnvBuilder}
 import sroof.tactic.SimpRewriteDb.RewriteDirection
 
 /** Built-in tactics for sroof.
@@ -47,7 +47,7 @@ object Builtins:
           TacticM.fail(TacticError.NotAnEquality(goal.target.show))
         case Some(triple) =>
           val (_, lhs, rhs) = triple
-          val env = buildEnvWithDefs(goal.ctx)
+          val env = EnvBuilder.fromContext(goal.ctx)
           if Quote.convEqual(goal.ctx.size, env, lhs, rhs) then
             TacticM.solveGoalWith(mv, Eq.mkRefl(lhs))
           else
@@ -112,7 +112,7 @@ object Builtins:
           // The codomain after substituting the argument (not yet known).
           // For non-dependent cod, Var(0) does not appear; substitute Uni(0) as dummy.
           val codClosed = Subst.subst(Term.Uni(0), cod)
-          val env       = buildEnvWithDefs(goal.ctx)
+          val env       = EnvBuilder.fromContext(goal.ctx)
           if Quote.convEqual(goal.ctx.size, env, codClosed, goal.target) then
             for
               argMv <- TacticM.addGoal(goal.ctx, dom)
@@ -733,7 +733,7 @@ object Builtins:
               case None => trivial  // goal not an equality: fall back
               case Some((_, lhsGoal, rhsGoal)) =>
                 // Normalise all sides for comparison and J-rule construction
-                val envForCtx  = buildEnvWithDefs(goal.ctx)
+                val envForCtx  = EnvBuilder.fromContext(goal.ctx)
                 val n          = goal.ctx.size
                 val (orientedLhsIh, orientedRhsIh) = direction match
                   case RewriteDirection.Forward  => (lhsIh, rhsIh)
@@ -782,7 +782,7 @@ object Builtins:
       case (Term.Con(lname, lref, largs), Term.Con(rname, rref, rargs))
            if lname == rname && lref == rref && largs.length == rargs.length && largs.nonEmpty =>
         val n         = goal.ctx.size
-        val envForCtx = buildEnvWithDefs(goal.ctx)
+        val envForCtx = EnvBuilder.fromContext(goal.ctx)
         // Find the unique argument position where largs and rargs differ.
         val diffPositions = largs.zip(rargs).zipWithIndex.collect {
           case ((la, ra), k) if !Quote.convEqual(n, envForCtx, la, ra) => k
@@ -856,7 +856,7 @@ object Builtins:
                 case None => trivial
                 case Some((_, lhsGoal, rhsGoal)) =>
                   val n      = goal.ctx.size
-                  val envCtx = buildEnvWithDefs(goal.ctx)
+                  val envCtx = EnvBuilder.fromContext(goal.ctx)
                   val (orientedLhs, orientedRhs) = direction match
                     case RewriteDirection.Forward  => (lhsLemma, rhsLemma)
                     case RewriteDirection.Backward => (rhsLemma, lhsLemma)
@@ -891,7 +891,7 @@ object Builtins:
       Some((defEntry.body, defEntry.tpe))
     else
       val n      = goal.ctx.size
-      val envCtx = buildEnvWithDefs(goal.ctx)
+      val envCtx = EnvBuilder.fromContext(goal.ctx)
       // For each Pi arg type, find the first context variable matching by definitional equality.
       val candidatesOpt: Option[List[Term]] =
         argTypes.foldLeft(Option(List.empty[Term])) { (accOpt, argType) =>
@@ -939,7 +939,7 @@ object Builtins:
     for
       goalPair   <- TacticM.currentGoal
       (mv, goal)  = goalPair
-      env         = buildEnvWithDefs(goal.ctx)
+      env         = EnvBuilder.fromContext(goal.ctx)
       found      <- goal.ctx.entries.zipWithIndex.collectFirst {
         case (entry, idx) =>
           val entryTpe = Subst.shift(idx + 1, entry.tpe)
@@ -954,18 +954,26 @@ object Builtins:
 
   // ---- contradiction ----
 
-  /** Find False or contradictory hypotheses in context to close the goal. */
-  val contradiction: TacticM[Unit] =
+  /** Find False or contradictory hypotheses in context to close the goal.
+   *
+   *  A hypothesis `h : T` is treated as False if T is an inductive type
+   *  with NO constructors according to the GlobalEnv (not the local Ind reference,
+   *  which always has empty params/ctors as it's just a name reference).
+   */
+  def contradiction(using env: GlobalEnv): TacticM[Unit] =
     for
       goalPair   <- TacticM.currentGoal
       (mv, goal)  = goalPair
-      // Look for a hypothesis of type False (inductive with no constructors)
+      // Look for a hypothesis of type False (inductive with no constructors in GlobalEnv)
       found      <- goal.ctx.entries.zipWithIndex.collectFirst {
         case (entry, idx) =>
           val tpe = Subst.shift(idx + 1, entry.tpe)
           tpe match
-            case Term.Ind(name, _, ctors) if ctors.isEmpty =>
-              Some(idx)
+            case Term.Ind(name, _, _) =>
+              // Look up the real constructor count in GlobalEnv to avoid false positives
+              // (local Ind nodes always have Nil ctors — they're name references).
+              val isEmpty = env.lookupInd(name).exists(_.ctors.isEmpty)
+              if isEmpty then Some(idx) else None
             case _ => None
       }.flatten match
         case Some(idx) =>
@@ -1037,7 +1045,7 @@ object Builtins:
       case Left(err) =>
         TacticM.fail(err)
       case Right((ihIdx, ihType)) =>
-        val envForCtx = buildEnvWithDefs(goal.ctx)
+        val envForCtx = EnvBuilder.fromContext(goal.ctx)
         Eq.extract(ihType) match
           case None =>
             TacticM.fail(TacticError.Custom(s"rewrite: $lemmaName is not an equality"))
@@ -1121,15 +1129,6 @@ object Builtins:
           go(depth, rt),
         )
     go(0, goalTarget)
-
-  private def buildEnvWithDefs(ctx: Context): Env =
-    ctx.entries.reverse.foldLeft(List.empty[Semantic]) { (partialEnv, entry) =>
-      entry match
-        case Context.Entry.Assum(_, _) =>
-          Semantic.freshVar(partialEnv.size) :: partialEnv
-        case Context.Entry.Def(_, _, defn) =>
-          Eval.eval(partialEnv, defn) :: partialEnv
-    }
 
   // ---- peelApps helper ----
 
